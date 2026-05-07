@@ -117,6 +117,29 @@ docker compose exec my-life-movie-backend uv run alembic upgrade head
 
 현재 기본 스키마는 인증 개발을 위한 `users`, `auth_refresh_tokens` 테이블을 포함합니다.
 
+### 테스트
+
+테스트는 현업에서 많이 쓰는 계층 기준으로 분리합니다.
+
+| Path | Purpose |
+|------|---------|
+| `tests/unit` | 모델, 서비스, 저장소, 순수 유틸 단위 검증 |
+| `tests/integration/api` | FastAPI 라우트, 미들웨어, Problem Details 응답 검증 |
+| `tests/integration/db` | Alembic 마이그레이션과 DB 스키마 검증 |
+| `tests/conftest.py` | 공용 fixture, 테스트 DB 세션, API client override |
+| `tests/factories.py` | 테스트 데이터 생성 helper |
+
+```bash
+# 전체 테스트
+uv run pytest
+
+# 단위 테스트만 실행
+uv run pytest -m unit
+
+# 통합 테스트만 실행
+uv run pytest -m integration
+```
+
 ### 인증 API 뼈대
 
 현재 인증 기능은 후속 구현자가 이어서 개발할 수 있도록 API 계약과 라우터를 먼저 연결했습니다. 회원가입/로그인은 아직 `501 AUTH_NOT_IMPLEMENTED`를 반환하며, refresh token 저장/회전/폐기 기반만 먼저 구현되어 있습니다. 실제 비밀번호 해싱, access token 발급, 로그인 성공 시 refresh token 쿠키 발급은 다음 단계에서 연결합니다.

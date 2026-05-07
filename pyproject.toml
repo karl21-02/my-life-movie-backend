@@ -21,3 +21,8 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "unit: 순수 도메인, 모델, 서비스 단위 테스트",
+    "integration: API, DB, 프레임워크 연동 테스트",
+]

@@ -1,8 +1,12 @@
+import pytest
 from sqlalchemy import create_engine, inspect
 
 from app.db.base import Base
 from app.models.auth_refresh_token import AuthRefreshToken, RefreshTokenStatus
 from app.models.user import User, UserRole, UserStatus
+
+
+pytestmark = pytest.mark.unit
 
 
 def test_user_model_defines_basic_auth_columns():

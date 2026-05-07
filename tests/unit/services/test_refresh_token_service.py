@@ -1,13 +1,10 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
-from app.db.base import Base
-from app.models.auth_refresh_token import AuthRefreshToken, RefreshTokenStatus
-from app.models.user import User, UserStatus
+from app.models.auth_refresh_token import RefreshTokenStatus
 from app.repositories.refresh_token_store import (
     RefreshTokenMetadata,
     SQLAlchemyRefreshTokenStore,
@@ -17,40 +14,22 @@ from app.services.refresh_token_service import (
     generate_refresh_token,
     hash_refresh_token,
 )
+from tests.factories import create_user
 
 
-@pytest.fixture()
-def session() -> Session:
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(bind=engine)
-    factory = sessionmaker(bind=engine, expire_on_commit=False)
-
-    with factory() as db_session:
-        yield db_session
+pytestmark = pytest.mark.unit
 
 
-def create_user(session: Session) -> User:
-    user = User(
-        email="tester@example.com",
-        password_hash="hashed-password",
-        status=UserStatus.ACTIVE,
-    )
-    session.add(user)
-    session.commit()
-    session.refresh(user)
-    return user
-
-
-def create_service(session: Session) -> RefreshTokenService:
+def create_service(db_session: Session) -> RefreshTokenService:
     return RefreshTokenService(
-        SQLAlchemyRefreshTokenStore(session),
+        SQLAlchemyRefreshTokenStore(db_session),
         expire_days=14,
     )
 
 
-def test_issue_stores_only_refresh_token_hash(session: Session):
-    user = create_user(session)
-    service = create_service(session)
+def test_issue_stores_only_refresh_token_hash(db_session: Session):
+    user = create_user(db_session)
+    service = create_service(db_session)
 
     issued = service.issue(
         user,
@@ -65,9 +44,9 @@ def test_issue_stores_only_refresh_token_hash(session: Session):
     assert issued.token.user_agent == "pytest"
 
 
-def test_rotate_marks_current_token_and_links_new_token(session: Session):
-    user = create_user(session)
-    service = create_service(session)
+def test_rotate_marks_current_token_and_links_new_token(db_session: Session):
+    user = create_user(db_session)
+    service = create_service(db_session)
     issued = service.issue(user, RefreshTokenMetadata(user_agent="first"))
 
     rotated = service.rotate(
@@ -75,7 +54,7 @@ def test_rotate_marks_current_token_and_links_new_token(session: Session):
         RefreshTokenMetadata(user_agent="second"),
     )
 
-    session.refresh(issued.token)
+    db_session.refresh(issued.token)
     assert issued.token.status == RefreshTokenStatus.ROTATED
     assert issued.token.replaced_by_token_id == rotated.token.id
     assert rotated.token.status == RefreshTokenStatus.ACTIVE
@@ -85,9 +64,9 @@ def test_rotate_marks_current_token_and_links_new_token(session: Session):
     assert rotated.token.user_agent == "second"
 
 
-def test_rotated_token_reuse_is_rejected(session: Session):
-    user = create_user(session)
-    service = create_service(session)
+def test_rotated_token_reuse_is_rejected(db_session: Session):
+    user = create_user(db_session)
+    service = create_service(db_session)
     issued = service.issue(user, RefreshTokenMetadata())
     service.rotate(issued.raw_token, RefreshTokenMetadata())
 
@@ -98,9 +77,9 @@ def test_rotated_token_reuse_is_rejected(session: Session):
     assert exc_info.value.code == "REFRESH_TOKEN_REUSED"
 
 
-def test_revoked_token_reuse_is_rejected(session: Session):
-    user = create_user(session)
-    service = create_service(session)
+def test_revoked_token_reuse_is_rejected(db_session: Session):
+    user = create_user(db_session)
+    service = create_service(db_session)
     issued = service.issue(user, RefreshTokenMetadata())
     service.revoke(issued.raw_token, "LOGOUT")
 
@@ -111,9 +90,9 @@ def test_revoked_token_reuse_is_rejected(session: Session):
     assert exc_info.value.code == "REFRESH_TOKEN_REUSED"
 
 
-def test_expired_status_token_reuse_is_rejected(session: Session):
-    user = create_user(session)
-    store = SQLAlchemyRefreshTokenStore(session)
+def test_expired_status_token_reuse_is_rejected(db_session: Session):
+    user = create_user(db_session)
+    store = SQLAlchemyRefreshTokenStore(db_session)
     service = RefreshTokenService(store, expire_days=14)
     raw_token = generate_refresh_token()
     token = store.create(
@@ -124,7 +103,7 @@ def test_expired_status_token_reuse_is_rejected(session: Session):
         metadata=RefreshTokenMetadata(),
     )
     token.status = RefreshTokenStatus.EXPIRED
-    session.commit()
+    db_session.commit()
 
     with pytest.raises(AppError) as exc_info:
         service.rotate(raw_token, RefreshTokenMetadata())
@@ -133,9 +112,9 @@ def test_expired_status_token_reuse_is_rejected(session: Session):
     assert exc_info.value.code == "REFRESH_TOKEN_REUSED"
 
 
-def test_active_but_time_expired_token_is_marked_expired(session: Session):
-    user = create_user(session)
-    store = SQLAlchemyRefreshTokenStore(session)
+def test_active_but_time_expired_token_is_marked_expired(db_session: Session):
+    user = create_user(db_session)
+    store = SQLAlchemyRefreshTokenStore(db_session)
     service = RefreshTokenService(store, expire_days=14)
     raw_token = generate_refresh_token()
     token = store.create(
@@ -149,15 +128,15 @@ def test_active_but_time_expired_token_is_marked_expired(session: Session):
     with pytest.raises(AppError) as exc_info:
         service.rotate(raw_token, RefreshTokenMetadata())
 
-    session.refresh(token)
+    db_session.refresh(token)
     assert token.status == RefreshTokenStatus.EXPIRED
     assert exc_info.value.status_code == 401
     assert exc_info.value.code == "REFRESH_TOKEN_EXPIRED"
 
 
-def test_revoke_marks_active_token_as_revoked(session: Session):
-    user = create_user(session)
-    service = create_service(session)
+def test_revoke_marks_active_token_as_revoked(db_session: Session):
+    user = create_user(db_session)
+    service = create_service(db_session)
     issued = service.issue(user, RefreshTokenMetadata())
 
     revoked = service.revoke(issued.raw_token, "LOGOUT")
