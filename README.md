@@ -85,6 +85,10 @@ uv sync
 uv run uvicorn app.main:app --reload
 ```
 
+## 📚 Docs
+
+- [개발 컨벤션](docs/CONVENTIONS.md): Git 브랜치 전략, 커밋 컨벤션, PR 규칙, 로그 기준
+
 ---
 
 ## 🗺 Roadmap
