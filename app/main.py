@@ -1,8 +1,27 @@
 from fastapi import FastAPI
 
-app = FastAPI(title="My Life Movie API")
+from app.core.config import get_settings
+from app.core.errors import register_exception_handlers
+from app.core.logging import configure_logging, get_logger
+from app.core.middleware import request_context_middleware
 
 
-@app.get("/health")
-async def health_check():
-    return {"status": "ok"}
+settings = get_settings()
+configure_logging(settings)
+logger = get_logger(__name__)
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(title=settings.app_name)
+    app.middleware("http")(request_context_middleware)
+    register_exception_handlers(app)
+
+    @app.get("/health")
+    async def health_check():
+        return {"status": "ok"}
+
+    logger.info("app_started", extra={"event": "app_started"})
+    return app
+
+
+app = create_app()
