@@ -11,6 +11,9 @@ class Settings:
     log_level: str = "INFO"
     cors_origins: list[str] = field(default_factory=lambda: ["http://localhost:3000"])
     database_url: str | None = None
+    redis_url: str | None = None
+    refresh_token_store: str = "mysql"
+    refresh_token_redis_retention_seconds: int = 86_400
     refresh_token_expire_days: int = 14
     refresh_token_cookie_name: str = "refresh_token"
     refresh_token_cookie_path: str = "/auth"
@@ -55,6 +58,12 @@ def get_settings() -> Settings:
             ["http://localhost:3000", "http://127.0.0.1:3000"],
         ),
         database_url=os.getenv("DATABASE_URL"),
+        redis_url=os.getenv("REDIS_URL"),
+        refresh_token_store=os.getenv("REFRESH_TOKEN_STORE", "mysql").strip().lower(),
+        refresh_token_redis_retention_seconds=parse_int_env(
+            os.getenv("REFRESH_TOKEN_REDIS_RETENTION_SECONDS"),
+            86_400,
+        ),
         refresh_token_expire_days=parse_int_env(
             os.getenv("REFRESH_TOKEN_EXPIRE_DAYS"),
             14,

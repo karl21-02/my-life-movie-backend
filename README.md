@@ -95,13 +95,14 @@ cp .env.example .env
 docker compose up --build
 ```
 
-기본 주소는 `http://localhost:8000`이고, 상태 확인은 `http://localhost:8000/health`에서 할 수 있습니다. Compose 실행 시 `APP_ENV=local`, `LOG_LEVEL=DEBUG`, 프론트 개발 서버용 CORS origin, MySQL 개발 DB가 기본으로 적용됩니다.
+기본 주소는 `http://localhost:8000`이고, 상태 확인은 `http://localhost:8000/health`에서 할 수 있습니다. Compose 실행 시 `APP_ENV=local`, `LOG_LEVEL=DEBUG`, 프론트 개발 서버용 CORS origin, MySQL 개발 DB, Redis refresh token store가 기본으로 적용됩니다.
 
 | Service | URL |
 |---------|-----|
 | Backend API | http://localhost:8000 |
 | Backend Health Check | http://localhost:8000/health |
 | MySQL | localhost:3307 |
+| Redis | localhost:6379 |
 
 ### DB 마이그레이션
 
@@ -161,7 +162,9 @@ uv run pytest -m integration
 
 ### Refresh Token 정책
 
-- DB에는 refresh token 원문을 저장하지 않고 `sha256` 해시만 저장합니다.
+- 저장소에는 refresh token 원문을 저장하지 않고 `sha256` 해시만 저장합니다.
+- 저장소는 `REFRESH_TOKEN_STORE`로 선택합니다. 기본값은 `mysql`이고, Docker Compose 로컬 환경은 `redis`를 사용합니다.
+- Redis 저장소는 active token 만료 시점 이후에도 재사용 탐지를 위해 `REFRESH_TOKEN_REDIS_RETENTION_SECONDS`만큼 token metadata를 보존합니다.
 - refresh token TTL 기본값은 `14일`입니다.
 - 성공적으로 회전하면 기존 row는 `ROTATED`, 신규 row는 `ACTIVE` 상태가 됩니다.
 - 이미 `ROTATED`, `REVOKED`, `EXPIRED` 상태인 token을 다시 사용하면 `401 REFRESH_TOKEN_REUSED`로 거부합니다.
