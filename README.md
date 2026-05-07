@@ -140,17 +140,24 @@ uv run pytest -m unit
 uv run pytest -m integration
 ```
 
-### 인증 API 뼈대
+### 인증 API
 
-현재 인증 기능은 후속 구현자가 이어서 개발할 수 있도록 API 계약과 라우터를 먼저 연결했습니다. 회원가입/로그인은 아직 `501 AUTH_NOT_IMPLEMENTED`를 반환하며, refresh token 저장/회전/폐기 기반만 먼저 구현되어 있습니다. 실제 비밀번호 해싱, access token 발급, 로그인 성공 시 refresh token 쿠키 발급은 다음 단계에서 연결합니다.
+현재 인증 기능은 이메일/비밀번호 기반 회원가입, 로그인, access token 검증, refresh token 회전/폐기까지 연결되어 있습니다. Access token은 응답 body로 반환하고, refresh token은 `HttpOnly` 쿠키로만 전달합니다.
 
 | Method | Path | Status |
 |--------|------|--------|
-| POST | `/auth/signup` | 회원가입 요청 스키마 연결, 현재 `501 AUTH_NOT_IMPLEMENTED` |
-| POST | `/auth/login` | 로그인 요청 스키마 연결, 현재 `501 AUTH_NOT_IMPLEMENTED` |
-| GET | `/auth/me` | 현재 사용자 조회 응답 스키마 연결, 현재 `501 AUTH_NOT_IMPLEMENTED` |
-| POST | `/auth/refresh` | `refresh_token` HttpOnly 쿠키 기반 refresh token 회전 및 쿠키 갱신 |
+| POST | `/auth/signup` | 사용자 생성, Argon2 비밀번호 해싱, access token 발급, refresh token 쿠키 설정 |
+| POST | `/auth/login` | 비밀번호 검증, access token 발급, refresh token 쿠키 설정 |
+| GET | `/auth/me` | `Authorization: Bearer <access_token>` 기반 현재 사용자 조회 |
+| POST | `/auth/refresh` | `refresh_token` HttpOnly 쿠키 기반 refresh token 회전, 새 access token 발급, 쿠키 갱신 |
 | POST | `/auth/logout` | 현재 refresh token 폐기 및 `refresh_token` 쿠키 삭제 |
+
+### Access Token 정책
+
+- Access token TTL 기본값은 `15분`입니다.
+- 알고리즘은 `HS256`이며, 로컬 기본 secret은 개발용입니다. 운영 환경은 `ACCESS_TOKEN_SECRET_KEY`를 반드시 별도로 설정해야 합니다.
+- 응답에는 `access_token`, `token_type`, `expires_in`, `user`를 반환합니다.
+- `/auth/me`는 `Authorization: Bearer <access_token>` 헤더를 사용합니다.
 
 ### Refresh Token 정책
 

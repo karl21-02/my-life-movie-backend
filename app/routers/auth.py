@@ -1,22 +1,27 @@
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
+from app.core.security import PasswordHasher
 from app.db.session import get_db_session
 from app.repositories.refresh_token_store import (
     RefreshTokenMetadata,
     SQLAlchemyRefreshTokenStore,
 )
+from app.repositories.user_repository import SQLAlchemyUserRepository
 from app.schemas.auth import (
     AuthLoginRequest,
     AuthSignupRequest,
     AuthTokenResponse,
     CurrentUserResponse,
     LogoutResponse,
-    RefreshTokenResponse,
 )
-from app.services.auth_service import AuthService, get_auth_service
+from app.services.access_token_service import (
+    AccessTokenService,
+    bearer_token_required_error,
+)
+from app.services.auth_service import AuthService
 from app.services.refresh_token_service import (
     RefreshTokenService,
     refresh_token_required_error,
@@ -24,6 +29,18 @@ from app.services.refresh_token_service import (
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def get_auth_service(
+    db_session: Session = Depends(get_db_session),
+) -> AuthService:
+    refresh_token_store = SQLAlchemyRefreshTokenStore(db_session)
+    return AuthService(
+        user_repository=SQLAlchemyUserRepository(db_session),
+        password_hasher=PasswordHasher(),
+        access_token_service=AccessTokenService(),
+        refresh_token_service=RefreshTokenService(refresh_token_store),
+    )
 
 
 def get_refresh_token_service(
@@ -66,6 +83,17 @@ def delete_refresh_token_cookie(response: Response, settings: Settings) -> None:
     )
 
 
+def extract_bearer_token(authorization: str | None) -> str:
+    if authorization is None:
+        raise bearer_token_required_error()
+
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise bearer_token_required_error()
+
+    return token
+
+
 @router.post(
     "/signup",
     response_model=AuthTokenResponse,
@@ -74,9 +102,14 @@ def delete_refresh_token_cookie(response: Response, settings: Settings) -> None:
 )
 async def signup(
     payload: AuthSignupRequest,
+    request: Request,
+    response: Response,
+    settings: Settings = Depends(get_settings),
     auth_service: AuthService = Depends(get_auth_service),
 ) -> AuthTokenResponse:
-    return await auth_service.signup(payload)
+    session = auth_service.signup(payload, build_refresh_token_metadata(request))
+    set_refresh_token_cookie(response, session.raw_refresh_token, settings)
+    return session.response
 
 
 @router.post(
@@ -86,9 +119,14 @@ async def signup(
 )
 async def login(
     payload: AuthLoginRequest,
+    request: Request,
+    response: Response,
+    settings: Settings = Depends(get_settings),
     auth_service: AuthService = Depends(get_auth_service),
 ) -> AuthTokenResponse:
-    return await auth_service.login(payload)
+    session = auth_service.login(payload, build_refresh_token_metadata(request))
+    set_refresh_token_cookie(response, session.raw_refresh_token, settings)
+    return session.response
 
 
 @router.get(
@@ -97,32 +135,33 @@ async def login(
     summary="현재 사용자 조회",
 )
 async def get_current_user(
+    authorization: str | None = Header(default=None),
     auth_service: AuthService = Depends(get_auth_service),
 ) -> CurrentUserResponse:
-    return await auth_service.get_current_user()
+    return auth_service.get_current_user(extract_bearer_token(authorization))
 
 
 @router.post(
     "/refresh",
-    response_model=RefreshTokenResponse,
+    response_model=AuthTokenResponse,
     summary="refresh token 회전",
 )
 async def refresh_token(
     request: Request,
     response: Response,
     settings: Settings = Depends(get_settings),
-    refresh_token_service: RefreshTokenService = Depends(get_refresh_token_service),
-) -> RefreshTokenResponse:
+    auth_service: AuthService = Depends(get_auth_service),
+) -> AuthTokenResponse:
     raw_refresh_token = request.cookies.get(settings.refresh_token_cookie_name)
     if raw_refresh_token is None:
         raise refresh_token_required_error()
 
-    issued = refresh_token_service.rotate(
+    session = auth_service.refresh(
         raw_refresh_token,
         build_refresh_token_metadata(request),
     )
-    set_refresh_token_cookie(response, issued.raw_token, settings)
-    return RefreshTokenResponse()
+    set_refresh_token_cookie(response, session.raw_refresh_token, settings)
+    return session.response
 
 
 @router.post(

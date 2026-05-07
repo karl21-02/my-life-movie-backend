@@ -32,15 +32,12 @@ class UserResponse(BaseModel):
 class AuthTokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    expires_in: int
     user: UserResponse
 
 
 class CurrentUserResponse(BaseModel):
     user: UserResponse
-
-
-class RefreshTokenResponse(BaseModel):
-    status: Literal["refreshed"] = "refreshed"
 
 
 class LogoutResponse(BaseModel):
