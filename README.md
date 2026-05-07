@@ -117,6 +117,16 @@ docker compose exec my-life-movie-backend uv run alembic upgrade head
 
 현재 기본 스키마는 인증 개발을 위한 `users` 테이블만 포함합니다.
 
+### 인증 API 뼈대
+
+현재 인증 기능은 후속 구현자가 이어서 개발할 수 있도록 API 계약과 라우터만 연결되어 있습니다. 실제 회원가입 처리, 비밀번호 해싱, JWT 발급, 현재 사용자 인증은 다음 단계에서 구현합니다.
+
+| Method | Path | Status |
+|--------|------|--------|
+| POST | `/auth/signup` | 회원가입 요청 스키마 연결, 현재 `501 AUTH_NOT_IMPLEMENTED` |
+| POST | `/auth/login` | 로그인 요청 스키마 연결, 현재 `501 AUTH_NOT_IMPLEMENTED` |
+| GET | `/auth/me` | 현재 사용자 조회 응답 스키마 연결, 현재 `501 AUTH_NOT_IMPLEMENTED` |
+
 ## 📚 Docs
 
 - [개발 컨벤션](docs/CONVENTIONS.md): Git 브랜치 전략, 커밋 컨벤션, PR 규칙, 로그 기준
