@@ -7,8 +7,10 @@ from app.core.security import PasswordHasher
 from app.db.session import get_db_session
 from app.repositories.refresh_token_store import (
     RefreshTokenMetadata,
+    RefreshTokenStore,
     SQLAlchemyRefreshTokenStore,
 )
+from app.repositories.redis_refresh_token_store import RedisRefreshTokenStore
 from app.repositories.user_repository import SQLAlchemyUserRepository
 from app.schemas.auth import (
     AuthLoginRequest,
@@ -33,20 +35,56 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 def get_auth_service(
     db_session: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
 ) -> AuthService:
-    refresh_token_store = SQLAlchemyRefreshTokenStore(db_session)
+    refresh_token_store = build_refresh_token_store(
+        settings=settings,
+        db_session=db_session,
+    )
     return AuthService(
         user_repository=SQLAlchemyUserRepository(db_session),
         password_hasher=PasswordHasher(),
-        access_token_service=AccessTokenService(),
-        refresh_token_service=RefreshTokenService(refresh_token_store),
+        access_token_service=AccessTokenService(settings),
+        refresh_token_service=RefreshTokenService(
+            refresh_token_store,
+            expire_days=settings.refresh_token_expire_days,
+        ),
     )
 
 
 def get_refresh_token_service(
     db_session: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
 ) -> RefreshTokenService:
-    return RefreshTokenService(SQLAlchemyRefreshTokenStore(db_session))
+    return RefreshTokenService(
+        build_refresh_token_store(
+            settings=settings,
+            db_session=db_session,
+        ),
+        expire_days=settings.refresh_token_expire_days,
+    )
+
+
+def build_refresh_token_store(
+    *,
+    settings: Settings,
+    db_session: Session,
+) -> RefreshTokenStore:
+    if settings.refresh_token_store == "redis":
+        if settings.redis_url is None:
+            raise RuntimeError("REFRESH_TOKEN_STORE=redis 설정에는 REDIS_URL이 필요합니다.")
+
+        return RedisRefreshTokenStore(
+            redis_url=settings.redis_url,
+            retention_seconds=settings.refresh_token_redis_retention_seconds,
+        )
+
+    if settings.refresh_token_store == "mysql":
+        return SQLAlchemyRefreshTokenStore(db_session)
+
+    raise RuntimeError(
+        f"지원하지 않는 refresh token 저장소입니다: {settings.refresh_token_store}",
+    )
 
 
 def build_refresh_token_metadata(request: Request) -> RefreshTokenMetadata:

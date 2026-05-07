@@ -55,6 +55,10 @@ class RefreshTokenStore(Protocol):
         ...
 
 
+class RefreshTokenStoreStateChanged(Exception):
+    pass
+
+
 class SQLAlchemyRefreshTokenStore:
     def __init__(self, session: Session) -> None:
         self.session = session

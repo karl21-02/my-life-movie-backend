@@ -11,6 +11,7 @@ from app.models.user import User
 from app.repositories.refresh_token_store import (
     RefreshTokenMetadata,
     RefreshTokenStore,
+    RefreshTokenStoreStateChanged,
 )
 
 
@@ -65,12 +66,15 @@ class RefreshTokenService:
             raise expired_refresh_token_error()
 
         raw_token = generate_refresh_token()
-        new_token = self.store.rotate(
-            current_token=current_token,
-            new_token_hash=hash_refresh_token(raw_token),
-            expires_at=self._expires_at(),
-            metadata=metadata,
-        )
+        try:
+            new_token = self.store.rotate(
+                current_token=current_token,
+                new_token_hash=hash_refresh_token(raw_token),
+                expires_at=self._expires_at(),
+                metadata=metadata,
+            )
+        except RefreshTokenStoreStateChanged as exc:
+            raise refresh_token_reused_error() from exc
         return IssuedRefreshToken(raw_token=raw_token, token=new_token)
 
     def revoke(
@@ -85,10 +89,13 @@ class RefreshTokenService:
         if current_token.status != RefreshTokenStatus.ACTIVE:
             raise refresh_token_reused_error()
 
-        return self.store.revoke(
-            current_token=current_token,
-            reason=reason,
-        )
+        try:
+            return self.store.revoke(
+                current_token=current_token,
+                reason=reason,
+            )
+        except RefreshTokenStoreStateChanged as exc:
+            raise refresh_token_reused_error() from exc
 
     def _expires_at(self) -> datetime:
         return datetime.now(timezone.utc) + timedelta(days=self.expire_days)
