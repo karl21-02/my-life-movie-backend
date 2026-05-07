@@ -39,3 +39,10 @@ class DownloadMovieResponse(BaseModel):
     message: str
     movie_id: int
     title: str
+
+
+class ShareMovieResponse(BaseModel):
+    message: str
+    movie_id: int
+    title: str
+    share_url: str

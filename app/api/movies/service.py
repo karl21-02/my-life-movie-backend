@@ -129,3 +129,14 @@ def download_movie(movie_id: int) -> Movie:
         extra={"event": "movie_download_requested", "movie_id": movie_id},
     )
     return movie
+
+
+def share_movie(movie_id: int, base_url: str) -> tuple[Movie, str]:
+    """공유 URL을 생성하고 반환한다."""
+    movie = get_movie(movie_id)
+    share_url = f"{base_url}/movies/{movie_id}"
+    logger.info(
+        "movie_shared",
+        extra={"event": "movie_shared", "movie_id": movie_id, "share_url": share_url},
+    )
+    return movie, share_url

@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from app.api.movies import schemas, service
 
@@ -32,4 +32,17 @@ async def download_movie(movie_id: int) -> schemas.DownloadMovieResponse:
         message=f"{movie.title} 다운로드가 준비되었습니다.",
         movie_id=movie.id,
         title=movie.title,
+    )
+
+
+@router.post("/{movie_id}/share", response_model=schemas.ShareMovieResponse)
+async def share_movie(movie_id: int, request: Request) -> schemas.ShareMovieResponse:
+    """특정 영화의 공유 URL을 생성하여 반환한다."""
+    base_url = str(request.base_url).rstrip("/")
+    movie, share_url = service.share_movie(movie_id, base_url)
+    return schemas.ShareMovieResponse(
+        message=f"{movie.title} 공유 링크가 생성되었습니다.",
+        movie_id=movie.id,
+        title=movie.title,
+        share_url=share_url,
     )
