@@ -115,17 +115,27 @@ uv run alembic upgrade head
 docker compose exec my-life-movie-backend uv run alembic upgrade head
 ```
 
-현재 기본 스키마는 인증 개발을 위한 `users` 테이블만 포함합니다.
+현재 기본 스키마는 인증 개발을 위한 `users`, `auth_refresh_tokens` 테이블을 포함합니다.
 
 ### 인증 API 뼈대
 
-현재 인증 기능은 후속 구현자가 이어서 개발할 수 있도록 API 계약과 라우터만 연결되어 있습니다. 실제 회원가입 처리, 비밀번호 해싱, JWT 발급, 현재 사용자 인증은 다음 단계에서 구현합니다.
+현재 인증 기능은 후속 구현자가 이어서 개발할 수 있도록 API 계약과 라우터를 먼저 연결했습니다. 회원가입/로그인은 아직 `501 AUTH_NOT_IMPLEMENTED`를 반환하며, refresh token 저장/회전/폐기 기반만 먼저 구현되어 있습니다. 실제 비밀번호 해싱, access token 발급, 로그인 성공 시 refresh token 쿠키 발급은 다음 단계에서 연결합니다.
 
 | Method | Path | Status |
 |--------|------|--------|
 | POST | `/auth/signup` | 회원가입 요청 스키마 연결, 현재 `501 AUTH_NOT_IMPLEMENTED` |
 | POST | `/auth/login` | 로그인 요청 스키마 연결, 현재 `501 AUTH_NOT_IMPLEMENTED` |
 | GET | `/auth/me` | 현재 사용자 조회 응답 스키마 연결, 현재 `501 AUTH_NOT_IMPLEMENTED` |
+| POST | `/auth/refresh` | `refresh_token` HttpOnly 쿠키 기반 refresh token 회전 및 쿠키 갱신 |
+| POST | `/auth/logout` | 현재 refresh token 폐기 및 `refresh_token` 쿠키 삭제 |
+
+### Refresh Token 정책
+
+- DB에는 refresh token 원문을 저장하지 않고 `sha256` 해시만 저장합니다.
+- refresh token TTL 기본값은 `14일`입니다.
+- 성공적으로 회전하면 기존 row는 `ROTATED`, 신규 row는 `ACTIVE` 상태가 됩니다.
+- 이미 `ROTATED`, `REVOKED`, `EXPIRED` 상태인 token을 다시 사용하면 `401 REFRESH_TOKEN_REUSED`로 거부합니다.
+- 쿠키 이름은 `refresh_token`, 속성은 `HttpOnly`, `SameSite=Lax`, `Path=/auth`입니다. 로컬 환경은 `Secure=false`, 운영 환경은 기본 `Secure=true`로 동작합니다.
 
 ## 📚 Docs
 

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -36,3 +37,11 @@ class AuthTokenResponse(BaseModel):
 
 class CurrentUserResponse(BaseModel):
     user: UserResponse
+
+
+class RefreshTokenResponse(BaseModel):
+    status: Literal["refreshed"] = "refreshed"
+
+
+class LogoutResponse(BaseModel):
+    status: Literal["logged_out"] = "logged_out"

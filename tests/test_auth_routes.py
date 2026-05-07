@@ -1,10 +1,45 @@
 from fastapi.testclient import TestClient
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
+from app.db.base import Base
+from app.db.session import get_db_session
 from app.main import create_app
+from app.models.auth_refresh_token import RefreshTokenStatus
+from app.models.user import User, UserStatus
+from app.repositories.refresh_token_store import (
+    RefreshTokenMetadata,
+    SQLAlchemyRefreshTokenStore,
+)
+from app.services.refresh_token_service import RefreshTokenService
 
 
-def create_test_client() -> TestClient:
-    return TestClient(create_app(), raise_server_exceptions=False)
+def create_test_client(db_session: Session | None = None) -> TestClient:
+    app = create_app()
+
+    if db_session is not None:
+        def override_db_session():
+            yield db_session
+
+        app.dependency_overrides[get_db_session] = override_db_session
+
+    return TestClient(app, raise_server_exceptions=False)
+
+
+@pytest.fixture()
+def db_session() -> Session:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    with factory() as session:
+        yield session
 
 
 def test_signup_route_exposes_placeholder_problem_details():
@@ -74,3 +109,69 @@ def test_signup_validation_error_does_not_expose_password_input():
     assert response.status_code == 422
     assert response.json()["code"] == "VALIDATION_ERROR"
     assert "secret" not in response.text
+
+
+def test_refresh_route_requires_refresh_cookie(db_session: Session):
+    response = create_test_client(db_session).post(
+        "/auth/refresh",
+        headers={"X-Request-ID": "req_refresh_missing"},
+    )
+
+    assert response.status_code == 401
+    body = response.json()
+    assert body["code"] == "AUTH_REQUIRED"
+    assert body["request_id"] == "req_refresh_missing"
+
+
+def test_refresh_route_rotates_refresh_cookie(db_session: Session):
+    user = create_active_user(db_session)
+    service = RefreshTokenService(SQLAlchemyRefreshTokenStore(db_session))
+    issued = service.issue(user, RefreshTokenMetadata(user_agent="pytest"))
+    client = create_test_client(db_session)
+    client.cookies.set("refresh_token", issued.raw_token)
+
+    response = client.post("/auth/refresh")
+
+    db_session.refresh(issued.token)
+    assert response.status_code == 200
+    assert response.json() == {"status": "refreshed"}
+    assert issued.token.status == RefreshTokenStatus.ROTATED
+    assert issued.token.replaced_by_token_id is not None
+    assert response.cookies.get("refresh_token") != issued.raw_token
+    assert_cookie_common_options(response.headers["set-cookie"])
+
+
+def test_logout_route_revokes_refresh_token_and_deletes_cookie(db_session: Session):
+    user = create_active_user(db_session)
+    service = RefreshTokenService(SQLAlchemyRefreshTokenStore(db_session))
+    issued = service.issue(user, RefreshTokenMetadata())
+    client = create_test_client(db_session)
+    client.cookies.set("refresh_token", issued.raw_token)
+
+    response = client.post("/auth/logout")
+
+    db_session.refresh(issued.token)
+    assert response.status_code == 200
+    assert response.json() == {"status": "logged_out"}
+    assert issued.token.status == RefreshTokenStatus.REVOKED
+    assert "refresh_token=" in response.headers["set-cookie"]
+    assert "Max-Age=0" in response.headers["set-cookie"]
+
+
+def create_active_user(session: Session) -> User:
+    user = User(
+        email="active@example.com",
+        password_hash="hashed-password",
+        status=UserStatus.ACTIVE,
+    )
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return user
+
+
+def assert_cookie_common_options(set_cookie_header: str) -> None:
+    assert "refresh_token=" in set_cookie_header
+    assert "HttpOnly" in set_cookie_header
+    assert "Path=/auth" in set_cookie_header
+    assert "SameSite=lax" in set_cookie_header

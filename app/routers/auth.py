@@ -1,15 +1,69 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, Response, status
+from sqlalchemy.orm import Session
 
+from app.core.config import Settings, get_settings
+from app.core.errors import AppError
+from app.db.session import get_db_session
+from app.repositories.refresh_token_store import (
+    RefreshTokenMetadata,
+    SQLAlchemyRefreshTokenStore,
+)
 from app.schemas.auth import (
     AuthLoginRequest,
     AuthSignupRequest,
     AuthTokenResponse,
     CurrentUserResponse,
+    LogoutResponse,
+    RefreshTokenResponse,
 )
 from app.services.auth_service import AuthService, get_auth_service
+from app.services.refresh_token_service import (
+    RefreshTokenService,
+    refresh_token_required_error,
+)
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def get_refresh_token_service(
+    db_session: Session = Depends(get_db_session),
+) -> RefreshTokenService:
+    return RefreshTokenService(SQLAlchemyRefreshTokenStore(db_session))
+
+
+def build_refresh_token_metadata(request: Request) -> RefreshTokenMetadata:
+    client_host = request.client.host if request.client else None
+    return RefreshTokenMetadata(
+        user_agent=request.headers.get("user-agent"),
+        ip_address=client_host,
+    )
+
+
+def set_refresh_token_cookie(
+    response: Response,
+    raw_refresh_token: str,
+    settings: Settings,
+) -> None:
+    response.set_cookie(
+        key=settings.refresh_token_cookie_name,
+        value=raw_refresh_token,
+        max_age=settings.refresh_token_expire_days * 24 * 60 * 60,
+        path=settings.refresh_token_cookie_path,
+        httponly=True,
+        secure=settings.refresh_token_cookie_secure,
+        samesite=settings.refresh_token_cookie_samesite,
+    )
+
+
+def delete_refresh_token_cookie(response: Response, settings: Settings) -> None:
+    response.delete_cookie(
+        key=settings.refresh_token_cookie_name,
+        path=settings.refresh_token_cookie_path,
+        secure=settings.refresh_token_cookie_secure,
+        httponly=True,
+        samesite=settings.refresh_token_cookie_samesite,
+    )
 
 
 @router.post(
@@ -46,3 +100,49 @@ async def get_current_user(
     auth_service: AuthService = Depends(get_auth_service),
 ) -> CurrentUserResponse:
     return await auth_service.get_current_user()
+
+
+@router.post(
+    "/refresh",
+    response_model=RefreshTokenResponse,
+    summary="refresh token 회전",
+)
+async def refresh_token(
+    request: Request,
+    response: Response,
+    settings: Settings = Depends(get_settings),
+    refresh_token_service: RefreshTokenService = Depends(get_refresh_token_service),
+) -> RefreshTokenResponse:
+    raw_refresh_token = request.cookies.get(settings.refresh_token_cookie_name)
+    if raw_refresh_token is None:
+        raise refresh_token_required_error()
+
+    issued = refresh_token_service.rotate(
+        raw_refresh_token,
+        build_refresh_token_metadata(request),
+    )
+    set_refresh_token_cookie(response, issued.raw_token, settings)
+    return RefreshTokenResponse()
+
+
+@router.post(
+    "/logout",
+    response_model=LogoutResponse,
+    summary="refresh token 폐기",
+)
+async def logout(
+    request: Request,
+    response: Response,
+    settings: Settings = Depends(get_settings),
+    refresh_token_service: RefreshTokenService = Depends(get_refresh_token_service),
+) -> LogoutResponse:
+    raw_refresh_token = request.cookies.get(settings.refresh_token_cookie_name)
+    if raw_refresh_token is not None:
+        try:
+            refresh_token_service.revoke(raw_refresh_token, "LOGOUT")
+        except AppError as exc:
+            if exc.status_code != 401:
+                raise
+
+    delete_refresh_token_cookie(response, settings)
+    return LogoutResponse()
