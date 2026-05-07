@@ -1,0 +1,41 @@
+name: "문서"
+description: "README, docs, API 문서 등 문서 작업을 등록합니다."
+labels: ["📝 docs"]
+body:
+  - type: dropdown
+    id: doc-type
+    attributes:
+      label: 문서 유형
+      description: 어떤 문서 작업인가요?
+      options:
+        - README
+        - 개발 문서
+        - API 문서
+        - 회의/발표 자료
+        - 기타
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: 작업 설명
+      description: 어떤 문서를 왜 수정해야 하는지 적어주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 수정 범위
+      description: 수정할 파일이나 섹션을 적어주세요.
+      placeholder: |
+        - README Getting Started
+        - docs/CONVENTIONS.md 로그 기준
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: 완료 조건
+      description: 문서 작업 완료 기준을 적어주세요.
+    validations:
+      required: true
