@@ -37,15 +37,15 @@ hotfix/31-openai-timeout
 
 이슈가 없는 작은 작업이라도 가능하면 이슈를 먼저 만들고 연결한다. 정말 단순한 오탈자 수정만 예외로 둘 수 있다.
 
-## 2. Commit Convention
+## 2. 커밋 컨벤션
 
-커밋 메시지는 Conventional Commits 형식을 따른다.
+커밋 메시지는 Conventional Commits 형식을 유지하되, 제목(subject)은 한국어로 작성한다. `type`과 `scope`는 자동화와 검색 편의를 위해 영어 소문자 토큰을 사용한다.
 
 ```text
-<type>(<scope>): <subject>
+<type>(<scope>): <한국어 제목>
 ```
 
-### Commit Types
+### 커밋 타입
 
 | Type | Usage |
 |---|---|
@@ -61,7 +61,7 @@ hotfix/31-openai-timeout
 | `perf` | 성능 개선 |
 | `revert` | 이전 커밋 되돌림 |
 
-### Backend Scopes
+### Backend Scope
 
 권장 scope:
 
@@ -72,19 +72,19 @@ api, app, config, ci, docs, deps, health, parser, ai, spotify, openai, test
 예시:
 
 ```text
-feat(api): add movie generation endpoint
-fix(health): return stable health response
-docs(docs): add backend development conventions
-ci(test): run pytest in pull requests
-chore(deps): update fastapi dependency
+feat(api): 영화 생성 API 엔드포인트 추가
+fix(health): 헬스 체크 응답 안정화
+docs(docs): 백엔드 개발 컨벤션 문서 추가
+ci(test): PR에서 pytest 실행
+chore(deps): FastAPI 의존성 업데이트
 ```
 
 규칙:
 
-- subject는 72자 이내로 작성한다.
+- 제목은 한국어로 72자 이내로 작성한다.
 - 마침표로 끝내지 않는다.
 - 한 커밋에는 하나의 목적만 담는다.
-- 변경 이유가 중요하면 본문에 `why`와 `impact`를 적는다.
+- 변경 이유가 중요하면 본문에 `왜`와 `영향`을 적는다.
 - 이슈 연결은 footer에 `Closes #12`, `Refs #18` 형식으로 적는다.
 
 ## 3. Pull Request Rules

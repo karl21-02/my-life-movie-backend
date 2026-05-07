@@ -25,4 +25,4 @@ jobs:
         run: uv sync
 
       - name: Run tests
-        run: uv run pytest --tb=short -q || echo "No tests found yet"
+        run: uv run pytest --tb=short -q
