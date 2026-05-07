@@ -5,6 +5,7 @@ from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import request_context_middleware
+from app.core.openapi import API_DESCRIPTION, OPENAPI_TAGS
 from app.routers import auth_router
 
 
@@ -14,7 +15,15 @@ logger = get_logger(__name__)
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title=settings.app_name)
+    app = FastAPI(
+        title=settings.app_name,
+        summary="My Life Movie 백엔드 API",
+        description=API_DESCRIPTION,
+        version="0.1.0",
+        openapi_tags=OPENAPI_TAGS,
+        docs_url="/docs",
+        redoc_url="/redoc",
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -25,7 +34,12 @@ def create_app() -> FastAPI:
     app.middleware("http")(request_context_middleware)
     register_exception_handlers(app)
 
-    @app.get("/health")
+    @app.get(
+        "/health",
+        tags=["시스템"],
+        summary="헬스 체크",
+        description="백엔드 애플리케이션이 요청을 처리할 수 있는지 확인합니다.",
+    )
     async def health_check():
         return {"status": "ok"}
 

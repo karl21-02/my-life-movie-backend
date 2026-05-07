@@ -118,6 +118,16 @@ docker compose exec my-life-movie-backend uv run alembic upgrade head
 
 현재 기본 스키마는 인증 개발을 위한 `users`, `auth_refresh_tokens` 테이블을 포함합니다.
 
+### API 문서
+
+FastAPI Swagger UI에서 인증 API 계약, 요청/응답 예시, Problem Details 에러 응답, bearer token 및 refresh cookie 사용 방식을 확인할 수 있습니다.
+
+| 문서 | URL |
+|------|-----|
+| Swagger UI | http://localhost:8000/docs |
+| ReDoc | http://localhost:8000/redoc |
+| OpenAPI JSON | http://localhost:8000/openapi.json |
+
 ### 테스트
 
 테스트는 현업에서 많이 쓰는 계층 기준으로 분리합니다.
