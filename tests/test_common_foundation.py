@@ -59,6 +59,16 @@ def test_request_id_header_is_reused():
     assert response.headers["x-request-id"] == "req_test"
 
 
+def test_cors_allows_local_frontend_origin():
+    response = create_test_client().get(
+        "/health",
+        headers={"Origin": "http://localhost:3000"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
 def test_app_error_uses_problem_details_shape():
     response = create_test_client().get(
         "/test/app-error",

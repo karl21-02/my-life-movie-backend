@@ -85,6 +85,38 @@ uv sync
 uv run uvicorn app.main:app --reload
 ```
 
+### Docker Compose로 실행
+
+```bash
+# 환경 변수 예시 파일 복사
+cp .env.example .env
+
+# 백엔드 개발 서버 실행
+docker compose up --build
+```
+
+기본 주소는 `http://localhost:8000`이고, 상태 확인은 `http://localhost:8000/health`에서 할 수 있습니다. Compose 실행 시 `APP_ENV=local`, `LOG_LEVEL=DEBUG`, 프론트 개발 서버용 CORS origin, MySQL 개발 DB가 기본으로 적용됩니다.
+
+| Service | URL |
+|---------|-----|
+| Backend API | http://localhost:8000 |
+| Backend Health Check | http://localhost:8000/health |
+| MySQL | localhost:3307 |
+
+### DB 마이그레이션
+
+개발 DB가 실행 중일 때 Alembic으로 테이블을 생성합니다.
+
+```bash
+# 로컬에서 실행
+uv run alembic upgrade head
+
+# Docker Compose 컨테이너에서 실행
+docker compose exec my-life-movie-backend uv run alembic upgrade head
+```
+
+현재 기본 스키마는 인증 개발을 위한 `users` 테이블만 포함합니다.
+
 ## 📚 Docs
 
 - [개발 컨벤션](docs/CONVENTIONS.md): Git 브랜치 전략, 커밋 컨벤션, PR 규칙, 로그 기준
