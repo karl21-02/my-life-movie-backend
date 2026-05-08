@@ -6,6 +6,7 @@ from sqlalchemy import (
     DateTime,
     Enum as SQLAlchemyEnum,
     Index,
+    Integer,
     String,
     UniqueConstraint,
 )
@@ -34,7 +35,11 @@ class User(TimestampMixin, Base):
         Index("ix_users_created_at", "created_at"),
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
