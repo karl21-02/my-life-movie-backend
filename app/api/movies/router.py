@@ -18,7 +18,7 @@ from app.schemas.movie import (
 )
 from app.services.access_token_service import AccessTokenClaims
 
-router = APIRouter(prefix="/api/v1/movies", tags=["movies"])
+router = APIRouter(prefix="/api/movies", tags=["movies"])
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf", ".txt", ".mp4", ".mov"}
 

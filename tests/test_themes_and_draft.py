@@ -39,7 +39,7 @@ def test_get_themes_includes_all_six_types():
 
 def test_create_draft_returns_movie_id_and_draft_status(api_client):
     response = api_client.post(
-        "/api/v1/movies/draft",
+        "/api/movies/draft",
         json={"theme_id": 1},
     )
 
@@ -51,7 +51,7 @@ def test_create_draft_returns_movie_id_and_draft_status(api_client):
 
 def test_create_draft_movie_id_is_positive_integer(api_client):
     response = api_client.post(
-        "/api/v1/movies/draft",
+        "/api/movies/draft",
         json={"theme_id": 3},
     )
 
