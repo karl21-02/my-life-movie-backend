@@ -1,8 +1,20 @@
-from fastapi import APIRouter, Depends, Header, Request, Response, status
+from typing import Annotated
+
+from fastapi import APIRouter, Cookie, Depends, Request, Response, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
+from app.core.openapi import (
+    ACCOUNT_NOT_ACTIVE_RESPONSE,
+    AUTH_CONFLICT_RESPONSE,
+    AUTH_REQUIRED_RESPONSE,
+    COMMON_PROBLEM_RESPONSES,
+    DELETE_REFRESH_COOKIE_HEADER,
+    INVALID_CREDENTIALS_RESPONSE,
+    SET_REFRESH_COOKIE_HEADER,
+)
 from app.core.security import PasswordHasher
 from app.db.session import get_db_session
 from app.repositories.refresh_token_store import (
@@ -30,8 +42,21 @@ from app.services.refresh_token_service import (
 )
 
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = APIRouter(prefix="/auth", tags=["인증"])
 
+bearer_scheme = HTTPBearer(
+    auto_error=False,
+    scheme_name="BearerAuth",
+    description="`/auth/login` 또는 `/auth/refresh` 응답의 access token을 사용합니다.",
+)
+
+RefreshTokenCookie = Annotated[
+    str | None,
+    Cookie(
+        alias="refresh_token",
+        description="로그인 또는 refresh 성공 시 발급되는 HttpOnly refresh token cookie입니다.",
+    ),
+]
 
 def get_auth_service(
     db_session: Session = Depends(get_db_session),
@@ -121,15 +146,16 @@ def delete_refresh_token_cookie(response: Response, settings: Settings) -> None:
     )
 
 
-def extract_bearer_token(authorization: str | None) -> str:
-    if authorization is None:
+def extract_bearer_token(
+    credentials: HTTPAuthorizationCredentials | None,
+) -> str:
+    if credentials is None:
         raise bearer_token_required_error()
 
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token:
+    if credentials.scheme.lower() != "bearer" or not credentials.credentials:
         raise bearer_token_required_error()
 
-    return token
+    return credentials.credentials
 
 
 @router.post(
@@ -137,6 +163,20 @@ def extract_bearer_token(authorization: str | None) -> str:
     response_model=AuthTokenResponse,
     status_code=status.HTTP_201_CREATED,
     summary="회원가입",
+    description=(
+        "이메일과 비밀번호로 사용자를 생성하고 access token을 응답합니다. "
+        "refresh token은 응답 body가 아니라 `HttpOnly` cookie로 설정합니다."
+    ),
+    responses={
+        201: {
+            "description": "회원가입 성공입니다.",
+            "headers": {
+                "Set-Cookie": SET_REFRESH_COOKIE_HEADER,
+            },
+        },
+        409: AUTH_CONFLICT_RESPONSE,
+        **COMMON_PROBLEM_RESPONSES,
+    },
 )
 async def signup(
     payload: AuthSignupRequest,
@@ -154,6 +194,20 @@ async def signup(
     "/login",
     response_model=AuthTokenResponse,
     summary="로그인",
+    description=(
+        "이메일과 비밀번호를 검증하고 access token을 응답합니다. "
+        "refresh token은 응답 body가 아니라 `HttpOnly` cookie로 설정합니다."
+    ),
+    responses={
+        200: {
+            "description": "로그인 성공입니다.",
+            "headers": {
+                "Set-Cookie": SET_REFRESH_COOKIE_HEADER,
+            },
+        },
+        401: INVALID_CREDENTIALS_RESPONSE,
+        **COMMON_PROBLEM_RESPONSES,
+    },
 )
 async def login(
     payload: AuthLoginRequest,
@@ -171,26 +225,49 @@ async def login(
     "/me",
     response_model=CurrentUserResponse,
     summary="현재 사용자 조회",
+    description="Authorization bearer access token으로 현재 사용자를 조회합니다.",
+    responses={
+        401: AUTH_REQUIRED_RESPONSE,
+        403: ACCOUNT_NOT_ACTIVE_RESPONSE,
+        **COMMON_PROBLEM_RESPONSES,
+    },
 )
 async def get_current_user(
-    authorization: str | None = Header(default=None),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     auth_service: AuthService = Depends(get_auth_service),
 ) -> CurrentUserResponse:
-    return auth_service.get_current_user(extract_bearer_token(authorization))
+    return auth_service.get_current_user(extract_bearer_token(credentials))
 
 
 @router.post(
     "/refresh",
     response_model=AuthTokenResponse,
     summary="refresh token 회전",
+    description=(
+        "`refresh_token` HttpOnly cookie를 검증하고 새 access token과 새 refresh token cookie를 발급합니다. "
+        "성공 시 기존 refresh token은 `ROTATED` 상태가 되어 재사용할 수 없습니다."
+    ),
+    responses={
+        200: {
+            "description": "refresh token 회전 성공입니다.",
+            "headers": {
+                "Set-Cookie": SET_REFRESH_COOKIE_HEADER,
+            },
+        },
+        401: AUTH_REQUIRED_RESPONSE,
+        **COMMON_PROBLEM_RESPONSES,
+    },
 )
 async def refresh_token(
     request: Request,
     response: Response,
+    raw_refresh_token: RefreshTokenCookie = None,
     settings: Settings = Depends(get_settings),
     auth_service: AuthService = Depends(get_auth_service),
 ) -> AuthTokenResponse:
-    raw_refresh_token = request.cookies.get(settings.refresh_token_cookie_name)
+    raw_refresh_token = raw_refresh_token or request.cookies.get(
+        settings.refresh_token_cookie_name,
+    )
     if raw_refresh_token is None:
         raise refresh_token_required_error()
 
@@ -206,14 +283,30 @@ async def refresh_token(
     "/logout",
     response_model=LogoutResponse,
     summary="refresh token 폐기",
+    description=(
+        "현재 `refresh_token` cookie를 `REVOKED` 처리하고 cookie를 삭제합니다. "
+        "이미 만료되었거나 없는 cookie여도 클라이언트 로그아웃은 성공 응답으로 정리합니다."
+    ),
+    responses={
+        200: {
+            "description": "로그아웃 성공입니다.",
+            "headers": {
+                "Set-Cookie": DELETE_REFRESH_COOKIE_HEADER,
+            },
+        },
+        **COMMON_PROBLEM_RESPONSES,
+    },
 )
 async def logout(
     request: Request,
     response: Response,
+    raw_refresh_token: RefreshTokenCookie = None,
     settings: Settings = Depends(get_settings),
     refresh_token_service: RefreshTokenService = Depends(get_refresh_token_service),
 ) -> LogoutResponse:
-    raw_refresh_token = request.cookies.get(settings.refresh_token_cookie_name)
+    raw_refresh_token = raw_refresh_token or request.cookies.get(
+        settings.refresh_token_cookie_name,
+    )
     if raw_refresh_token is not None:
         try:
             refresh_token_service.revoke(raw_refresh_token, "LOGOUT")
