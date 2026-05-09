@@ -6,6 +6,15 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
+from app.core.openapi import (
+    ACCOUNT_NOT_ACTIVE_RESPONSE,
+    AUTH_CONFLICT_RESPONSE,
+    AUTH_REQUIRED_RESPONSE,
+    COMMON_PROBLEM_RESPONSES,
+    DELETE_REFRESH_COOKIE_HEADER,
+    INVALID_CREDENTIALS_RESPONSE,
+    SET_REFRESH_COOKIE_HEADER,
+)
 from app.core.security import PasswordHasher
 from app.db.session import get_db_session
 from app.repositories.refresh_token_store import (
@@ -22,7 +31,6 @@ from app.schemas.auth import (
     CurrentUserResponse,
     LogoutResponse,
 )
-from app.schemas.errors import ProblemDetailsResponse
 from app.services.access_token_service import (
     AccessTokenService,
     bearer_token_required_error,
@@ -49,49 +57,6 @@ RefreshTokenCookie = Annotated[
         description="로그인 또는 refresh 성공 시 발급되는 HttpOnly refresh token cookie입니다.",
     ),
 ]
-
-SET_REFRESH_COOKIE_HEADER = {
-    "description": (
-        "`refresh_token` HttpOnly cookie입니다. 로컬은 Secure=false, 운영은 Secure=true로 설정합니다."
-    ),
-    "schema": {
-        "type": "string",
-        "example": (
-            "refresh_token=raw-token; HttpOnly; Max-Age=1209600; "
-            "Path=/auth; SameSite=lax"
-        ),
-    },
-}
-
-DELETE_REFRESH_COOKIE_HEADER = {
-    "description": "`refresh_token` cookie 삭제 헤더입니다.",
-    "schema": {
-        "type": "string",
-        "example": "refresh_token=; HttpOnly; Max-Age=0; Path=/auth; SameSite=lax",
-    },
-}
-
-COMMON_PROBLEM_RESPONSES = {
-    422: {
-        "model": ProblemDetailsResponse,
-        "description": "요청 본문, 헤더, 쿠키 검증 실패입니다.",
-    },
-    500: {
-        "model": ProblemDetailsResponse,
-        "description": "예상하지 못한 서버 오류입니다.",
-    },
-}
-
-AUTH_REQUIRED_RESPONSE = {
-    "model": ProblemDetailsResponse,
-    "description": "인증 정보가 없거나 유효하지 않습니다.",
-}
-
-AUTH_CONFLICT_RESPONSE = {
-    "model": ProblemDetailsResponse,
-    "description": "이미 존재하는 이메일처럼 요청이 현재 리소스 상태와 충돌합니다.",
-}
-
 
 def get_auth_service(
     db_session: Session = Depends(get_db_session),
@@ -240,10 +205,7 @@ async def signup(
                 "Set-Cookie": SET_REFRESH_COOKIE_HEADER,
             },
         },
-        401: {
-            "model": ProblemDetailsResponse,
-            "description": "이메일 또는 비밀번호가 올바르지 않습니다.",
-        },
+        401: INVALID_CREDENTIALS_RESPONSE,
         **COMMON_PROBLEM_RESPONSES,
     },
 )
@@ -266,10 +228,7 @@ async def login(
     description="Authorization bearer access token으로 현재 사용자를 조회합니다.",
     responses={
         401: AUTH_REQUIRED_RESPONSE,
-        403: {
-            "model": ProblemDetailsResponse,
-            "description": "계정이 비활성 상태입니다.",
-        },
+        403: ACCOUNT_NOT_ACTIVE_RESPONSE,
         **COMMON_PROBLEM_RESPONSES,
     },
 )
