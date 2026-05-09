@@ -5,6 +5,7 @@ from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import request_context_middleware
+from app.routers import themes, movies
 from app.routers import auth_router
 
 
@@ -24,6 +25,9 @@ def create_app() -> FastAPI:
     )
     app.middleware("http")(request_context_middleware)
     register_exception_handlers(app)
+
+    app.include_router(themes.router)
+    app.include_router(movies.router)
 
     @app.get("/health")
     async def health_check():
