@@ -2,7 +2,7 @@ from fastapi import APIRouter, Request
 
 from app.api.movies import schemas, service
 
-router = APIRouter(prefix="/movies", tags=["movies"])
+router = APIRouter(prefix="/api/movies", tags=["movies"])
 
 
 @router.get("", response_model=list[schemas.MovieSummary])

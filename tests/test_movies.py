@@ -10,7 +10,7 @@ def create_test_client() -> TestClient:
 # ── 목록 조회 ───────────────────────────────────────────────
 
 def test_get_movies_returns_list():
-    response = create_test_client().get("/movies")
+    response = create_test_client().get("/api/movies")
 
     assert response.status_code == 200
     body = response.json()
@@ -19,7 +19,7 @@ def test_get_movies_returns_list():
 
 
 def test_get_movies_summary_shape():
-    response = create_test_client().get("/movies")
+    response = create_test_client().get("/api/movies")
 
     first = response.json()[0]
     assert "id" in first
@@ -34,7 +34,7 @@ def test_get_movies_summary_shape():
 # ── 상세 조회 ───────────────────────────────────────────────
 
 def test_get_movie_returns_detail():
-    response = create_test_client().get("/movies/1")
+    response = create_test_client().get("/api/movies/1")
 
     assert response.status_code == 200
     body = response.json()
@@ -48,7 +48,7 @@ def test_get_movie_returns_detail():
 
 
 def test_get_movie_ost_shape():
-    response = create_test_client().get("/movies/1")
+    response = create_test_client().get("/api/movies/1")
 
     ost = response.json()["ost"]
     assert len(ost) > 0
@@ -58,7 +58,7 @@ def test_get_movie_ost_shape():
 
 def test_get_movie_not_found_returns_problem_detail():
     response = create_test_client().get(
-        "/movies/9999",
+        "/api/movies/9999",
         headers={"X-Request-ID": "req_not_found"},
     )
 
@@ -74,9 +74,9 @@ def test_get_movie_not_found_returns_problem_detail():
 def test_delete_movie_returns_message():
     client = create_test_client()
     # 먼저 존재 확인
-    assert client.get("/movies/3").status_code == 200
+    assert client.get("/api/movies/3").status_code == 200
 
-    response = client.delete("/movies/3")
+    response = client.delete("/api/movies/3")
 
     assert response.status_code == 200
     assert "message" in response.json()
@@ -84,7 +84,7 @@ def test_delete_movie_returns_message():
 
 def test_delete_movie_not_found_returns_problem_detail():
     response = create_test_client().delete(
-        "/movies/9999",
+        "/api/movies/9999",
         headers={"X-Request-ID": "req_del_not_found"},
     )
 
@@ -97,7 +97,7 @@ def test_delete_movie_not_found_returns_problem_detail():
 # ── 다운로드 ─────────────────────────────────────────────────
 
 def test_download_movie_returns_info():
-    response = create_test_client().get("/movies/1/download")
+    response = create_test_client().get("/api/movies/1/download")
 
     assert response.status_code == 200
     body = response.json()
@@ -108,7 +108,7 @@ def test_download_movie_returns_info():
 
 def test_download_movie_not_found_returns_problem_detail():
     response = create_test_client().get(
-        "/movies/9999/download",
+        "/api/movies/9999/download",
         headers={"X-Request-ID": "req_dl_not_found"},
     )
 
@@ -122,9 +122,9 @@ def test_download_movie_not_found_returns_problem_detail():
 
 def test_request_id_propagated_in_movie_response():
     response = create_test_client().get(
-        "/movies",
-        headers={"X-Request-ID": "req_movies_list"},
+        "/api/movies",
+        headers={"X-Request-ID": "req_movie_id_test"},
     )
 
     assert response.status_code == 200
-    assert response.headers["x-request-id"] == "req_movies_list"
+    assert response.headers.get("X-Request-ID") == "req_movie_id_test"
