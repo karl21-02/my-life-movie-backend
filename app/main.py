@@ -5,8 +5,9 @@ from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import request_context_middleware
-from app.routers import themes, music, movies
+from app.routers import themes, music
 from app.routers import auth_router
+from app.api.movies.router import router as phase2_movies_router
 
 
 settings = get_settings()
@@ -28,7 +29,7 @@ def create_app() -> FastAPI:
 
     app.include_router(themes.router)
     app.include_router(music.router)
-    app.include_router(movies.router)
+    app.include_router(phase2_movies_router)
 
     @app.get("/health")
     async def health_check():
