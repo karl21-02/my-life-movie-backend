@@ -23,6 +23,7 @@ def test_alembic_upgrade_head_creates_auth_tables(tmp_path, monkeypatch):
 
         assert inspector.has_table("users")
         assert inspector.has_table("auth_refresh_tokens")
+        assert inspector.has_table("movies")
         assert {column["name"] for column in inspector.get_columns("auth_refresh_tokens")} >= {
             "id",
             "user_id",
@@ -31,13 +32,19 @@ def test_alembic_upgrade_head_creates_auth_tables(tmp_path, monkeypatch):
             "status",
             "expires_at",
         }
+        assert {column["name"] for column in inspector.get_columns("movies")} >= {
+            "id",
+            "user_id",
+            "theme_id",
+            "status",
+        }
 
         with engine.connect() as connection:
             version = connection.execute(
                 text("SELECT version_num FROM alembic_version"),
             ).scalar_one()
 
-        assert version == "20260507_0002"
+        assert version == "20260509_0003"
         engine.dispose()
     finally:
         get_settings.cache_clear()

@@ -45,13 +45,11 @@ def test_recommend_music_returns_ai_message_and_tracks():
     assert len(body["tracks"]) > 0
 
 
-def test_update_music_saves_selection():
-    client = create_test_client()
-
-    draft = client.post("/api/v1/movies/draft", json={"theme_id": 1}).json()
+def test_update_music_saves_selection(api_client):
+    draft = api_client.post("/api/v1/movies/draft", json={"theme_id": 1}).json()
     movie_id = draft["movie_id"]
 
-    response = client.put(
+    response = api_client.put(
         f"/api/v1/movies/{movie_id}/music",
         json={"music_id": 101},
     )
@@ -62,8 +60,8 @@ def test_update_music_saves_selection():
     assert body["music_id"] == 101
 
 
-def test_update_music_returns_404_for_unknown_movie():
-    response = create_test_client().put(
+def test_update_music_returns_404_for_unknown_movie(api_client):
+    response = api_client.put(
         "/api/v1/movies/99999/music",
         json={"music_id": 101},
     )
