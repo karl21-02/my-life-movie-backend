@@ -77,6 +77,24 @@ def test_get_chat_history_returns_conversation(api_client):
     assert len(history) == 4  # user + ai 각 2회
 
 
+def test_chat_returns_timeout_message_when_gpt_times_out(api_client, monkeypatch):
+    import httpx
+    from openai import APITimeoutError
+    from app.core.config import Settings
+
+    async def fake_gpt_timeout(api_key, history):
+        raise APITimeoutError(request=httpx.Request("POST", "https://api.openai.com"))
+
+    monkeypatch.setattr("app.api.movies.router._call_gpt", fake_gpt_timeout)
+    monkeypatch.setattr("app.api.movies.router.get_settings", lambda: Settings(openai_api_key="fake-key"))
+
+    movie_id = _create_draft(api_client)
+    response = api_client.post(f"/api/movies/{movie_id}/chat", json={"message": "테스트"})
+
+    assert response.status_code == 200
+    assert "초과" in response.json()["ai_question"]
+
+
 def test_get_chat_history_for_unknown_movie_returns_404(api_client):
     response = api_client.get("/api/movies/99999/chat")
 
