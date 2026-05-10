@@ -15,13 +15,13 @@ dependencies = [
     "python-multipart>=0.0.9",
     "redis>=5.0.0",
     "sqlalchemy>=2.0.45",
+    "httpx>=0.28.1",
     "uvicorn>=0.46.0",
 ]
 
 [dependency-groups]
 dev = [
     "fakeredis>=2.0.0",
-    "httpx>=0.28.1",
     "pytest>=9.0.3",
 ]
 
