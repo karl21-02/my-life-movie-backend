@@ -45,6 +45,31 @@ def test_recommend_music_returns_ai_message_and_tracks():
     assert len(body["tracks"]) > 0
 
 
+def test_recommend_music_returns_mock_when_empty_results(monkeypatch):
+    """Spotify가 빈 결과를 반환하면 mock fallback이 내려와야 한다."""
+    async def fake_get_token(client_id, client_secret):
+        return "fake_token"
+
+    async def fake_search_empty(token, query):
+        return []
+
+    from app.core.config import Settings
+    monkeypatch.setattr("app.routers.music._get_spotify_token", fake_get_token)
+    monkeypatch.setattr("app.routers.music._search_spotify_tracks", fake_search_empty)
+    monkeypatch.setattr("app.routers.music.get_settings", lambda: Settings(
+        spotify_client_id="x", spotify_client_secret="x"
+    ))
+
+    response = create_test_client().post(
+        "/api/v1/music/recommend",
+        json={"movie_id": 1, "message": "따뜻한 분위기"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["tracks"]) > 0
+
+
 def test_update_music_saves_selection(api_client):
     draft = api_client.post("/api/movies/draft", json={"theme_id": 1}).json()
     movie_id = draft["movie_id"]

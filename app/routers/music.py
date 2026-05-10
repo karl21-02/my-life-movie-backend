@@ -84,17 +84,30 @@ async def _search_spotify_tracks(token: str, query: str) -> list[MusicTrack]:
     ]
 
 
+def _mock_recommend() -> MusicRecommendResponse:
+    return MusicRecommendResponse(
+        ai_message="말씀하신 분위기에 어울리는 곡을 찾아봤어요!",
+        tracks=[MusicTrack(music_id=999, title="AI 추천: Emotional Journey", file_url="", is_ai_recommended=True)],
+    )
+
+
 @router.post("/recommend", response_model=MusicRecommendResponse)
 async def recommend_music(request: MusicRecommendRequest):
     settings = get_settings()
     if not settings.spotify_client_id or not settings.spotify_client_secret:
-        return MusicRecommendResponse(
-            ai_message="말씀하신 분위기에 어울리는 곡을 찾아봤어요!",
-            tracks=[MusicTrack(music_id=999, title="AI 추천: Emotional Journey", file_url="", is_ai_recommended=True)],
-        )
+        return _mock_recommend()
     try:
         token = await _get_spotify_token(settings.spotify_client_id, settings.spotify_client_secret)
         tracks = await _search_spotify_tracks(token, request.message)
+
+        if not tracks:
+            logger.info("spotify_empty_results", extra={"query": request.message})
+            tracks = await _search_spotify_tracks(token, f"{request.message} music")
+
+        if not tracks:
+            logger.warning("spotify_no_results_after_retry", extra={"query": request.message})
+            return _mock_recommend()
+
         return MusicRecommendResponse(
             ai_message=f"'{request.message}' 분위기에 어울리는 곡을 찾았어요!",
             tracks=tracks,
