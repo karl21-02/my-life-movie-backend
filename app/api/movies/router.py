@@ -37,6 +37,8 @@ AI_QUESTIONS = [
     "이 영화를 보고 나서 어떤 기분이 들었으면 하나요?",
 ]
 
+_GPT_TIMEOUT_SECONDS = 10.0
+
 # GPT 시스템 프롬프트: 사용자의 이야기를 바탕으로 AI가 역질문과 시나리오 초안을 생성하도록 지시
 _GPT_SYSTEM_PROMPT = (
     "당신은 사용자의 인생 영화를 만드는 감독입니다. "
@@ -49,7 +51,7 @@ _GPT_SYSTEM_PROMPT = (
 async def _call_gpt(api_key: str, history: list[dict]) -> tuple[str, str]:
     from openai import AsyncOpenAI
 
-    client = AsyncOpenAI(api_key=api_key)
+    client = AsyncOpenAI(api_key=api_key, timeout=_GPT_TIMEOUT_SECONDS)
     messages: list[dict] = [{"role": "system", "content": _GPT_SYSTEM_PROMPT}]
     for entry in history:
         role = "user" if entry["role"] == "user" else "assistant"
@@ -162,8 +164,14 @@ async def chat_prompt(
         try:
             ai_question, current_draft = await _call_gpt(settings.openai_api_key, history)
         except Exception as e:
-            logger.warning("openai_chat_failed", extra={"error": str(e)})
-            ai_question, current_draft = _mock_chat_response(history, movie.current_draft, request.message)
+            from openai import APITimeoutError
+            if isinstance(e, APITimeoutError):
+                logger.warning("openai_chat_timeout", extra={"error": str(e)})
+                ai_question = "죄송합니다, AI 응답 시간이 초과되었습니다. 잠시 후 다시 시도해주세요."
+                current_draft = movie.current_draft or ""
+            else:
+                logger.warning("openai_chat_failed", extra={"error": str(e)})
+                ai_question, current_draft = _mock_chat_response(history, movie.current_draft, request.message)
     else:
         ai_question, current_draft = _mock_chat_response(history, movie.current_draft, request.message)
 
