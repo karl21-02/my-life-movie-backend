@@ -22,6 +22,8 @@ class Settings:
     access_token_secret_key: str = "local-dev-only-change-me-please-rotate"
     access_token_algorithm: str = "HS256"
     access_token_expire_minutes: int = 15
+    spotify_client_id: str = ""
+    spotify_client_secret: str = ""
 
 
 def parse_csv_env(value: str | None, default: list[str]) -> list[str]:
@@ -80,4 +82,6 @@ def get_settings() -> Settings:
             os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"),
             15,
         ),
+        spotify_client_id=os.getenv("SPOTIFY_CLIENT_ID", ""),
+        spotify_client_secret=os.getenv("SPOTIFY_CLIENT_SECRET", ""),
     )

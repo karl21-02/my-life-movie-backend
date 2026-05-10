@@ -1,4 +1,5 @@
-from fastapi import Depends, Header
+from fastapi import Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import Settings, get_settings
 from app.services.access_token_service import (
@@ -8,18 +9,13 @@ from app.services.access_token_service import (
 )
 
 
-def _extract_bearer_token(authorization: str | None) -> str:
-    if authorization is None:
-        raise bearer_token_required_error()
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        raise bearer_token_required_error()
-    return token
+_bearer = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
 
 
 def get_current_user(
-    authorization: str | None = Header(default=None),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     settings: Settings = Depends(get_settings),
 ) -> AccessTokenClaims:
-    token = _extract_bearer_token(authorization)
-    return AccessTokenService(settings).verify(token)
+    if credentials is None:
+        raise bearer_token_required_error()
+    return AccessTokenService(settings).verify(credentials.credentials)

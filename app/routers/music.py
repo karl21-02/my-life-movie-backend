@@ -1,5 +1,13 @@
+import base64
+
+import httpx
 from fastapi import APIRouter
-from app.schemas.music import MusicListResponse, MusicTrack, MusicRecommendRequest, MusicRecommendResponse
+
+from app.core.config import get_settings
+from app.core.logging import get_logger
+from app.schemas.music import MusicListResponse, MusicRecommendRequest, MusicRecommendResponse, MusicTrack
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/music", tags=["music"])
 
@@ -44,12 +52,69 @@ async def get_music_by_theme(theme_id: int):
     return MusicListResponse(default_tracks=tracks, ai_recommended=[])
 
 
+async def _get_spotify_token(client_id: str, client_secret: str) -> str:
+    credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://accounts.spotify.com/api/token",
+            headers={"Authorization": f"Basic {credentials}"},
+            data={"grant_type": "client_credentials"},
+        )
+        resp.raise_for_status()
+        return resp.json()["access_token"]
+
+
+async def _search_spotify_tracks(token: str, query: str) -> list[MusicTrack]:
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            "https://api.spotify.com/v1/search",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"q": query, "type": "track", "limit": 5},
+        )
+        resp.raise_for_status()
+        items = resp.json()["tracks"]["items"]
+    return [
+        MusicTrack(
+            music_id=2000 + i,
+            title=f"{item['name']} - {item['artists'][0]['name']}",
+            file_url=item.get("preview_url") or "",
+            is_ai_recommended=True,
+        )
+        for i, item in enumerate(items)
+    ]
+
+
+def _mock_recommend() -> MusicRecommendResponse:
+    return MusicRecommendResponse(
+        ai_message="말씀하신 분위기에 어울리는 곡을 찾아봤어요!",
+        tracks=[MusicTrack(music_id=999, title="AI 추천: Emotional Journey", file_url="", is_ai_recommended=True)],
+    )
+
+
 @router.post("/recommend", response_model=MusicRecommendResponse)
 async def recommend_music(request: MusicRecommendRequest):
-    """사용자 메시지를 받아 AI가 어울리는 음악을 추천합니다. (AI 연동 전 mock 응답)"""
-    return MusicRecommendResponse(
-        ai_message="말씀하신 분위기에 어울리는 곡을 찾아봤어요! 더 구체적으로 원하는 감정이나 분위기가 있으신가요?",
-        tracks=[
-            MusicTrack(music_id=999, title="AI 추천: Emotional Journey", file_url="/static/music/ai_rec_1.mp3", is_ai_recommended=True),
-        ],
-    )
+    settings = get_settings()
+    if not settings.spotify_client_id or not settings.spotify_client_secret:
+        return _mock_recommend()
+    try:
+        token = await _get_spotify_token(settings.spotify_client_id, settings.spotify_client_secret)
+        tracks = await _search_spotify_tracks(token, request.message)
+
+        if not tracks:
+            logger.info("spotify_empty_results", extra={"query": request.message})
+            tracks = await _search_spotify_tracks(token, f"{request.message} music")
+
+        if not tracks:
+            logger.warning("spotify_no_results_after_retry", extra={"query": request.message})
+            return _mock_recommend()
+
+        return MusicRecommendResponse(
+            ai_message=f"'{request.message}' 분위기에 어울리는 곡을 찾았어요!",
+            tracks=tracks,
+        )
+    except Exception as e:
+        logger.warning("spotify_recommend_failed", extra={"error": str(e)})
+        return MusicRecommendResponse(
+            ai_message="음악을 불러오는 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.",
+            tracks=[MusicTrack(music_id=998, title="추천 로드 실패", file_url="", is_ai_recommended=True)],
+        )
