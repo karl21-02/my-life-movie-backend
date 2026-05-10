@@ -1,10 +1,13 @@
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from sqlalchemy.orm import Session
 
 from app.api.movies import schemas, service
+from app.core.config import get_settings
 from app.core.deps import get_current_user
+from app.core.logging import get_logger
 from app.db.session import get_db_session
 from app.models.movie import MovieStatus
 from app.repositories.movie_repository import SQLAlchemyMovieRepository
@@ -19,17 +22,53 @@ from app.schemas.movie import (
 )
 from app.services.access_token_service import AccessTokenClaims
 
+logger = get_logger(__name__)
+
 router = APIRouter(prefix="/api/movies", tags=["movies"])
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf", ".txt", ".mp4", ".mov"}
 
-# TODO: OpenAI GPT 연동
 AI_QUESTIONS = [
     "어떤 시절의 이야기를 가장 담고 싶으신가요?",
     "그 시절 가장 기억에 남는 장소나 공간이 있다면 알려주세요.",
     "영화에서 가장 중요하게 표현하고 싶은 감정은 무엇인가요?",
     "이 영화를 보고 나서 어떤 기분이 들었으면 하나요?",
 ]
+
+_GPT_SYSTEM_PROMPT = (
+    "당신은 사용자의 인생 영화를 만드는 감독입니다. "
+    "사용자의 이야기를 바탕으로 아래 JSON 형식으로만 응답하세요:\n"
+    '{"ai_question": "이야기를 더 잘 이해하기 위한 핵심 질문 하나", '
+    '"current_draft": "지금까지 나눈 이야기를 담은 짧은 영화 시나리오 초안 (1~2문장)"}'
+)
+
+
+async def _call_gpt(api_key: str, history: list[dict]) -> tuple[str, str]:
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(api_key=api_key)
+    messages: list[dict] = [{"role": "system", "content": _GPT_SYSTEM_PROMPT}]
+    for entry in history:
+        role = "user" if entry["role"] == "user" else "assistant"
+        messages.append({"role": role, "content": entry["message"]})
+
+    response = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=messages,
+        response_format={"type": "json_object"},
+        max_tokens=300,
+    )
+    data = json.loads(response.choices[0].message.content)
+    return data["ai_question"], data["current_draft"]
+
+
+def _mock_chat_response(history: list[dict], current_draft: str | None, message: str) -> tuple[str, str]:
+    turn = len([h for h in history if h["role"] == "user"]) - 1
+    ai_question = AI_QUESTIONS[min(turn, len(AI_QUESTIONS) - 1)]
+    draft = current_draft or ""
+    if message:
+        draft = f"{message}의 이야기를 담은 영화."
+    return ai_question, draft
 
 
 def _get_movie_or_403(repo: SQLAlchemyMovieRepository, movie_id: int, user_id: int):
@@ -110,19 +149,22 @@ async def chat_prompt(
     db: Session = Depends(get_db_session),
     current_user: AccessTokenClaims = Depends(get_current_user),
 ):
-    """사용자 메시지를 받아 AI 역질문과 현재 시나리오 초안을 반환합니다. (AI 연동 전 예시)"""
+    """사용자 메시지를 받아 AI 역질문과 현재 시나리오 초안을 반환합니다."""
     repo = SQLAlchemyMovieRepository(db)
     movie = _get_movie_or_403(repo, movie_id, current_user.user_id)
 
     history = list(movie.chat_history or [])
     history.append({"role": "user", "message": request.message})
 
-    turn = len([h for h in history if h["role"] == "user"]) - 1
-    ai_question = AI_QUESTIONS[min(turn, len(AI_QUESTIONS) - 1)]
-
-    current_draft = movie.current_draft or ""
-    if request.message:
-        current_draft = f"{request.message}의 이야기를 담은 영화."
+    settings = get_settings()
+    if settings.openai_api_key:
+        try:
+            ai_question, current_draft = await _call_gpt(settings.openai_api_key, history)
+        except Exception as e:
+            logger.warning("openai_chat_failed", extra={"error": str(e)})
+            ai_question, current_draft = _mock_chat_response(history, movie.current_draft, request.message)
+    else:
+        ai_question, current_draft = _mock_chat_response(history, movie.current_draft, request.message)
 
     history.append({"role": "ai", "message": ai_question})
     movie.chat_history = history
