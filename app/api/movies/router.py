@@ -26,8 +26,10 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/movies", tags=["movies"])
 
+# 파일 업로드 시 허용되는 확장자 목록 (소문자 기준)
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf", ".txt", ".mp4", ".mov"}
 
+# AI 역질문 예시 (실제 GPT 연동 시에는 모델이 생성)
 AI_QUESTIONS = [
     "어떤 시절의 이야기를 가장 담고 싶으신가요?",
     "그 시절 가장 기억에 남는 장소나 공간이 있다면 알려주세요.",
@@ -35,6 +37,7 @@ AI_QUESTIONS = [
     "이 영화를 보고 나서 어떤 기분이 들었으면 하나요?",
 ]
 
+# GPT 시스템 프롬프트: 사용자의 이야기를 바탕으로 AI가 역질문과 시나리오 초안을 생성하도록 지시
 _GPT_SYSTEM_PROMPT = (
     "당신은 사용자의 인생 영화를 만드는 감독입니다. "
     "사용자의 이야기를 바탕으로 아래 JSON 형식으로만 응답하세요:\n"
@@ -42,7 +45,7 @@ _GPT_SYSTEM_PROMPT = (
     '"current_draft": "지금까지 나눈 이야기를 담은 짧은 영화 시나리오 초안 (1~2문장)"}'
 )
 
-
+# GPT API를 호출하여 AI 질문과 시나리오 초안을 받아오는 함수
 async def _call_gpt(api_key: str, history: list[dict]) -> tuple[str, str]:
     from openai import AsyncOpenAI
 
@@ -61,7 +64,7 @@ async def _call_gpt(api_key: str, history: list[dict]) -> tuple[str, str]:
     data = json.loads(response.choices[0].message.content)
     return data["ai_question"], data["current_draft"]
 
-
+# GPT 연동 실패 시 사용할 간단한 모킹 함수 (실제 구현에서는 GPT 응답을 기반으로 생성)
 def _mock_chat_response(history: list[dict], current_draft: str | None, message: str) -> tuple[str, str]:
     turn = len([h for h in history if h["role"] == "user"]) - 1
     ai_question = AI_QUESTIONS[min(turn, len(AI_QUESTIONS) - 1)]
@@ -70,7 +73,7 @@ def _mock_chat_response(history: list[dict], current_draft: str | None, message:
         draft = f"{message}의 이야기를 담은 영화."
     return ai_question, draft
 
-
+# 영화 조회 시 존재 여부와 소유자 권한을 확인하는 헬퍼 함수
 def _get_movie_or_403(repo: SQLAlchemyMovieRepository, movie_id: int, user_id: int):
     movie = repo.get_by_id(movie_id)
     if movie is None:
@@ -79,8 +82,6 @@ def _get_movie_or_403(repo: SQLAlchemyMovieRepository, movie_id: int, user_id: i
         raise HTTPException(status_code=403, detail="접근 권한이 없습니다.")
     return movie
 
-
-# ── Phase 2: 영화 생성 (DB + auth) ──────────────────────────────────────────
 
 @router.post("/draft", response_model=CreateDraftResponse)
 async def create_draft(
@@ -215,8 +216,6 @@ async def generate_movie(
     repo.update(movie)
     return {"movie_id": movie.id, "status": movie.status.value, "message": "영화 생성이 시작되었습니다."}
 
-
-# ── Phase 4: 영화 감상/공유 (in-memory, TODO: DB 연동) ──────────────────────
 
 @router.get("", response_model=list[schemas.MovieSummary])
 async def get_movies() -> list[schemas.MovieSummary]:
