@@ -1,0 +1,36 @@
+name: my-life-movie-backend
+
+services:
+  my-life-movie-backend:
+    build:
+      context: .
+      target: runtime
+    env_file: .env
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: [CMD, uv, run, python, -c,
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      my-life-movie-redis:
+        condition: service_healthy
+
+  my-life-movie-redis:
+    image: redis:7.4-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - my-life-movie-redis-data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  my-life-movie-redis-data:
