@@ -9,6 +9,7 @@ from app.core.middleware import request_context_middleware
 from app.core.openapi import API_DESCRIPTION, OPENAPI_TAGS
 from app.routers import themes, music
 from app.routers import auth_router
+from prometheus_fastapi_instrumentator import Instrumentator
 
 
 settings = get_settings()
@@ -35,6 +36,7 @@ def create_app() -> FastAPI:
     )
     app.middleware("http")(request_context_middleware)
     register_exception_handlers(app)
+    Instrumentator().instrument(app).expose(app)
 
     app.include_router(themes.router)
     app.include_router(music.router)
