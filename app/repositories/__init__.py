@@ -6,6 +6,10 @@ from app.repositories.refresh_token_store import (
 )
 from app.repositories.redis_refresh_token_store import RedisRefreshTokenStore
 from app.repositories.user_repository import SQLAlchemyUserRepository, UserRepository
+from app.repositories.video_generation_job_repository import (
+    SQLAlchemyVideoGenerationJobRepository,
+    VideoGenerationJobRepository,
+)
 
 __all__ = [
     "RefreshTokenMetadata",
@@ -15,4 +19,6 @@ __all__ = [
     "SQLAlchemyRefreshTokenStore",
     "SQLAlchemyUserRepository",
     "UserRepository",
+    "SQLAlchemyVideoGenerationJobRepository",
+    "VideoGenerationJobRepository",
 ]
