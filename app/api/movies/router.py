@@ -1,4 +1,3 @@
-import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
@@ -7,7 +6,6 @@ from sqlalchemy.orm import Session
 from app.api.movies import schemas, service
 from app.core.config import get_settings
 from app.core.deps import get_current_user
-from app.core.logging import get_logger
 from app.db.session import get_db_session
 from app.models.movie import MovieStatus
 from app.repositories.movie_repository import SQLAlchemyMovieRepository
@@ -21,59 +19,12 @@ from app.schemas.movie import (
     SummaryResponse,
 )
 from app.services.access_token_service import AccessTokenClaims
-
-logger = get_logger(__name__)
+from app.services.story_generation_service import generate_story_inputs
 
 router = APIRouter(prefix="/api/movies", tags=["movies"])
 
 # 파일 업로드 시 허용되는 확장자 목록 (소문자 기준)
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf", ".txt", ".mp4", ".mov"}
-
-# AI 역질문 예시 (실제 GPT 연동 시에는 모델이 생성)
-AI_QUESTIONS = [
-    "어떤 시절의 이야기를 가장 담고 싶으신가요?",
-    "그 시절 가장 기억에 남는 장소나 공간이 있다면 알려주세요.",
-    "영화에서 가장 중요하게 표현하고 싶은 감정은 무엇인가요?",
-    "이 영화를 보고 나서 어떤 기분이 들었으면 하나요?",
-]
-
-_GPT_TIMEOUT_SECONDS = 10.0
-
-# GPT 시스템 프롬프트: 사용자의 이야기를 바탕으로 AI가 역질문과 시나리오 초안을 생성하도록 지시
-_GPT_SYSTEM_PROMPT = (
-    "당신은 사용자의 인생 영화를 만드는 감독입니다. "
-    "사용자의 이야기를 바탕으로 아래 JSON 형식으로만 응답하세요:\n"
-    '{"ai_question": "이야기를 더 잘 이해하기 위한 핵심 질문 하나", '
-    '"current_draft": "지금까지 나눈 이야기를 담은 짧은 영화 시나리오 초안 (1~2문장)"}'
-)
-
-# GPT API를 호출하여 AI 질문과 시나리오 초안을 받아오는 함수
-async def _call_gpt(api_key: str, history: list[dict]) -> tuple[str, str]:
-    from openai import AsyncOpenAI
-
-    client = AsyncOpenAI(api_key=api_key, timeout=_GPT_TIMEOUT_SECONDS)
-    messages: list[dict] = [{"role": "system", "content": _GPT_SYSTEM_PROMPT}]
-    for entry in history:
-        role = "user" if entry["role"] == "user" else "assistant"
-        messages.append({"role": role, "content": entry["message"]})
-
-    response = await client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=messages,
-        response_format={"type": "json_object"},
-        max_tokens=300,
-    )
-    data = json.loads(response.choices[0].message.content)
-    return data["ai_question"], data["current_draft"]
-
-# GPT 연동 실패 시 사용할 간단한 모킹 함수 (실제 구현에서는 GPT 응답을 기반으로 생성)
-def _mock_chat_response(history: list[dict], current_draft: str | None, message: str) -> tuple[str, str]:
-    turn = len([h for h in history if h["role"] == "user"]) - 1
-    ai_question = AI_QUESTIONS[min(turn, len(AI_QUESTIONS) - 1)]
-    draft = current_draft or ""
-    if message:
-        draft = f"{message}의 이야기를 담은 영화."
-    return ai_question, draft
 
 # 영화 조회 시 존재 여부와 소유자 권한을 확인하는 헬퍼 함수
 def _get_movie_or_403(repo: SQLAlchemyMovieRepository, movie_id: int, user_id: int):
@@ -159,27 +110,26 @@ async def chat_prompt(
     history = list(movie.chat_history or [])
     history.append({"role": "user", "message": request.message})
 
-    settings = get_settings()
-    if settings.openai_api_key:
-        try:
-            ai_question, current_draft = await _call_gpt(settings.openai_api_key, history)
-        except Exception as e:
-            from openai import APITimeoutError
-            if isinstance(e, APITimeoutError):
-                logger.warning("openai_chat_timeout", extra={"error": str(e)})
-                ai_question = "죄송합니다, AI 응답 시간이 초과되었습니다. 잠시 후 다시 시도해주세요."
-                current_draft = movie.current_draft or ""
-            else:
-                logger.warning("openai_chat_failed", extra={"error": str(e)})
-                ai_question, current_draft = _mock_chat_response(history, movie.current_draft, request.message)
-    else:
-        ai_question, current_draft = _mock_chat_response(history, movie.current_draft, request.message)
+    result = await generate_story_inputs(
+        api_key=get_settings().openai_api_key,
+        history=history,
+        current_draft=movie.current_draft,
+        latest_message=request.message,
+    )
 
-    history.append({"role": "ai", "message": ai_question})
+    history.append({"role": "ai", "message": result.ai_question})
     movie.chat_history = history
-    movie.current_draft = current_draft
+    movie.current_draft = result.current_draft
+    movie.story_brief = result.story_brief
+    movie.scene_plan = result.scene_plan
+    movie.generation_prompt = result.generation_prompt
     repo.update(movie)
-    return ChatResponse(ai_question=ai_question, current_draft=current_draft)
+    return ChatResponse(
+        ai_question=result.ai_question,
+        current_draft=result.current_draft,
+        story_brief=result.story_brief,
+        scene_plan=result.scene_plan,
+    )
 
 
 @router.get("/{movie_id}/chat")
@@ -208,6 +158,9 @@ async def get_summary(
         files=movie.files or [],
         theme={"theme_id": movie.theme_id},
         music={"music_id": movie.music_id} if movie.music_id is not None else None,
+        story_brief=movie.story_brief,
+        scene_plan=movie.scene_plan or [],
+        generation_prompt=movie.generation_prompt,
     )
 
 

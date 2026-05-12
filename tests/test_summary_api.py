@@ -15,6 +15,9 @@ def test_summary_returns_theme_and_empty_defaults(api_client):
     assert body["theme"]["theme_id"] == 2
     assert body["files"] == []
     assert body["music"] is None
+    assert body["story_brief"] is None
+    assert body["scene_plan"] == []
+    assert body["generation_prompt"] is None
 
 
 def test_summary_includes_uploaded_files(api_client):
@@ -51,6 +54,9 @@ def test_summary_includes_prompt_after_chat(api_client):
 
     assert response.status_code == 200
     assert len(response.json()["prompt"]) > 0
+    assert response.json()["story_brief"]["title"] == "나의 인생 영화"
+    assert len(response.json()["scene_plan"]) > 0
+    assert "장면 구성" in response.json()["generation_prompt"]
 
 
 def test_summary_for_unknown_movie_returns_404(api_client):
