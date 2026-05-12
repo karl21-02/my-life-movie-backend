@@ -7,8 +7,8 @@ from app.api.movies import schemas, service
 from app.core.config import get_settings
 from app.core.deps import get_current_user
 from app.db.session import get_db_session
-from app.models.movie import MovieStatus
 from app.repositories.movie_repository import SQLAlchemyMovieRepository
+from app.repositories.video_generation_job_repository import SQLAlchemyVideoGenerationJobRepository
 from app.schemas.movie import (
     CreateDraftRequest,
     CreateDraftResponse,
@@ -16,10 +16,13 @@ from app.schemas.movie import (
     ChatRequest,
     ChatResponse,
     FileUploadResponse,
+    GenerationRequestResponse,
+    GenerationStatusResponse,
     SummaryResponse,
 )
 from app.services.access_token_service import AccessTokenClaims
 from app.services.story_generation_service import generate_story_inputs
+from app.services.video_generation_service import VideoGenerationService
 
 router = APIRouter(prefix="/api/movies", tags=["movies"])
 
@@ -164,18 +167,54 @@ async def get_summary(
     )
 
 
-@router.post("/{movie_id}/generate")
+def _get_video_generation_service(db: Session) -> VideoGenerationService:
+    return VideoGenerationService(
+        movie_repository=SQLAlchemyMovieRepository(db),
+        job_repository=SQLAlchemyVideoGenerationJobRepository(db),
+    )
+
+
+@router.get("/{movie_id}/generation", response_model=GenerationStatusResponse)
+async def get_generation_status(
+    movie_id: int,
+    db: Session = Depends(get_db_session),
+    current_user: AccessTokenClaims = Depends(get_current_user),
+):
+    """최신 영상 생성 Job 상태를 조회합니다."""
+    job = _get_video_generation_service(db).get_latest_generation(
+        movie_id=movie_id,
+        user_id=current_user.user_id,
+    )
+    return GenerationStatusResponse(
+        movie_id=job.movie_id,
+        job_id=job.id,
+        status=job.status.value,
+        progress=job.progress,
+        output_url=job.output_url,
+        thumbnail_url=job.thumbnail_url,
+        error_code=job.error_code,
+        error_message=job.error_message,
+    )
+
+
+@router.post("/{movie_id}/generate", response_model=GenerationRequestResponse)
 async def generate_movie(
     movie_id: int,
     db: Session = Depends(get_db_session),
     current_user: AccessTokenClaims = Depends(get_current_user),
 ):
-    """영화 생성을 시작합니다. 상태가 GENERATING으로 변경됩니다."""
-    repo = SQLAlchemyMovieRepository(db)
-    movie = _get_movie_or_403(repo, movie_id, current_user.user_id)
-    movie.status = MovieStatus.GENERATING
-    repo.update(movie)
-    return {"movie_id": movie.id, "status": movie.status.value, "message": "영화 생성이 시작되었습니다."}
+    """영상 생성 Job을 생성하고 QUEUED 상태로 반환합니다."""
+    result = _get_video_generation_service(db).request_generation(
+        movie_id=movie_id,
+        user_id=current_user.user_id,
+    )
+    return GenerationRequestResponse(
+        movie_id=result.job.movie_id,
+        job_id=result.job.id,
+        status=result.job.status.value,
+        progress=result.job.progress,
+        message="영상 생성 요청이 접수되었습니다.",
+    )
 
 
 @router.get("", response_model=list[schemas.MovieSummary])

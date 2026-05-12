@@ -65,13 +65,62 @@ def test_summary_for_unknown_movie_returns_404(api_client):
     assert response.status_code == 404
 
 
-def test_generate_changes_status_to_generating(api_client):
+def test_generate_creates_queued_generation_job(api_client):
     movie_id = _create_draft(api_client)
+    api_client.post(f"/api/movies/{movie_id}/chat", json={"message": "학창시절 이야기"})
 
     response = api_client.post(f"/api/movies/{movie_id}/generate")
 
     assert response.status_code == 200
-    assert response.json()["status"] == "GENERATING"
+    body = response.json()
+    assert body["movie_id"] == movie_id
+    assert body["job_id"] > 0
+    assert body["status"] == "QUEUED"
+    assert body["progress"] == 0
+
+
+def test_generate_without_story_input_returns_409(api_client):
+    movie_id = _create_draft(api_client)
+
+    response = api_client.post(f"/api/movies/{movie_id}/generate")
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "GENERATION_INPUT_NOT_READY"
+
+
+def test_generate_duplicate_in_progress_job_returns_409(api_client):
+    movie_id = _create_draft(api_client)
+    api_client.post(f"/api/movies/{movie_id}/chat", json={"message": "학창시절 이야기"})
+    api_client.post(f"/api/movies/{movie_id}/generate")
+
+    response = api_client.post(f"/api/movies/{movie_id}/generate")
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "GENERATION_ALREADY_IN_PROGRESS"
+
+
+def test_get_generation_status_returns_latest_job(api_client):
+    movie_id = _create_draft(api_client)
+    api_client.post(f"/api/movies/{movie_id}/chat", json={"message": "학창시절 이야기"})
+    created = api_client.post(f"/api/movies/{movie_id}/generate").json()
+
+    response = api_client.get(f"/api/movies/{movie_id}/generation")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["movie_id"] == movie_id
+    assert body["job_id"] == created["job_id"]
+    assert body["status"] == "QUEUED"
+    assert body["progress"] == 0
+
+
+def test_get_generation_status_without_job_returns_404(api_client):
+    movie_id = _create_draft(api_client)
+
+    response = api_client.get(f"/api/movies/{movie_id}/generation")
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "GENERATION_JOB_NOT_FOUND"
 
 
 def test_generate_for_unknown_movie_returns_404(api_client):
