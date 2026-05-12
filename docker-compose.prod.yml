@@ -32,5 +32,31 @@ services:
       retries: 10
       start_period: 5s
 
+  my-life-movie-prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - my-life-movie-prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=7d'
+    restart: unless-stopped
+
+  my-life-movie-grafana:
+    image: grafana/grafana:11.0.0
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_ADMIN_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - my-life-movie-grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - my-life-movie-prometheus
+    restart: unless-stopped
+
 volumes:
   my-life-movie-redis-data:
+  my-life-movie-prometheus-data:
+  my-life-movie-grafana-data:

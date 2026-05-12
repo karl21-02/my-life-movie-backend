@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: my-life-movie-backend
+    static_configs:
+      - targets: ['my-life-movie-backend:8000']
