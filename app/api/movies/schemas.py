@@ -46,3 +46,8 @@ class ShareMovieResponse(BaseModel):
     movie_id: int
     title: str
     share_url: str
+
+
+class SimilarMoviesResponse(BaseModel):
+    movie_id: int
+    similar_movies: list[SimilarMovie]

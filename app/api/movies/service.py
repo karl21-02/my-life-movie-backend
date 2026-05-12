@@ -140,3 +140,27 @@ def share_movie(movie_id: int, base_url: str) -> tuple[Movie, str]:
         extra={"event": "movie_shared", "movie_id": movie_id, "share_url": share_url},
     )
     return movie, share_url
+
+
+def get_similar_movies(movie_id: int, limit: int = 4) -> list[SimilarMovie]:
+    """장르 우선, 감정 차선으로 유사 영화를 추천한다. 자기 자신은 제외하고 최대 limit편 반환."""
+    base = get_movie(movie_id)  # 존재하지 않으면 404 raise
+
+    same_genre = [m for m in _movies if m.id != movie_id and m.genre == base.genre]
+    same_sentiment = [
+        m for m in _movies
+        if m.id != movie_id and m.genre != base.genre and m.sentiment == base.sentiment
+    ]
+    others = [
+        m for m in _movies
+        if m.id != movie_id and m.genre != base.genre and m.sentiment != base.sentiment
+    ]
+
+    candidates = same_genre + same_sentiment + others
+    selected = candidates[:limit]
+
+    logger.info(
+        "similar_movies_requested",
+        extra={"event": "similar_movies_requested", "movie_id": movie_id, "count": len(selected)},
+    )
+    return [SimilarMovie(id=m.id, title=m.title, thumbnail=m.thumbnail) for m in selected]
