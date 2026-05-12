@@ -1,6 +1,6 @@
 name: "버그 리포트"
 description: "버그를 제보합니다."
-labels: ["bug"]
+labels: ["🐛 bug"]
 body:
   - type: textarea
     id: bug-description

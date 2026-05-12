@@ -5,6 +5,31 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "alembic>=1.17.2",
+    "argon2-cffi>=23.1.0",
+    "cryptography>=48.0.0",
+    "email-validator>=2.3.0",
     "fastapi>=0.136.1",
+    "pyjwt>=2.8.0",
+    "pymysql>=1.1.2",
+    "python-multipart>=0.0.9",
+    "redis>=5.0.0",
+    "sqlalchemy>=2.0.45",
+    "httpx>=0.28.1",
     "uvicorn>=0.46.0",
+    "openai>=2.36.0",
+]
+
+[dependency-groups]
+dev = [
+    "fakeredis>=2.0.0",
+    "pytest>=9.0.3",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "unit: 순수 도메인, 모델, 서비스 단위 테스트",
+    "integration: API, DB, 프레임워크 연동 테스트",
 ]

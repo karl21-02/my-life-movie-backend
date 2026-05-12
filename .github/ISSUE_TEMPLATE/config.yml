@@ -1,1 +1,5 @@
-blank_issues_enabled: true
+blank_issues_enabled: false
+contact_links:
+  - name: "개발 컨벤션"
+    url: "https://github.com/karl21-02/my-life-movie-backend/blob/develop/docs/CONVENTIONS.md"
+    about: "브랜치, 커밋, PR, 로그 기준을 확인합니다."

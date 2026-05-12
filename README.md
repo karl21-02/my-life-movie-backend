@@ -85,6 +85,105 @@ uv sync
 uv run uvicorn app.main:app --reload
 ```
 
+### Docker Compose로 실행
+
+```bash
+# 환경 변수 예시 파일 복사
+cp .env.example .env
+
+# 백엔드 개발 서버 실행
+docker compose up --build
+```
+
+기본 주소는 `http://localhost:8000`이고, 상태 확인은 `http://localhost:8000/health`에서 할 수 있습니다. Compose 실행 시 `APP_ENV=local`, `LOG_LEVEL=DEBUG`, 프론트 개발 서버용 CORS origin, MySQL 개발 DB, Redis refresh token store가 기본으로 적용됩니다.
+
+| Service | URL |
+|---------|-----|
+| Backend API | http://localhost:8000 |
+| Backend Health Check | http://localhost:8000/health |
+| MySQL | localhost:3307 |
+| Redis | localhost:6379 |
+
+### DB 마이그레이션
+
+개발 DB가 실행 중일 때 Alembic으로 테이블을 생성합니다.
+
+```bash
+# 로컬에서 실행
+uv run alembic upgrade head
+
+# Docker Compose 컨테이너에서 실행
+docker compose exec my-life-movie-backend uv run alembic upgrade head
+```
+
+현재 기본 스키마는 인증 개발을 위한 `users`, `auth_refresh_tokens` 테이블을 포함합니다.
+
+### API 문서
+
+FastAPI Swagger UI에서 인증 API 계약, 요청/응답 예시, Problem Details 에러 응답, bearer token 및 refresh cookie 사용 방식을 확인할 수 있습니다.
+
+| 문서 | URL |
+|------|-----|
+| Swagger UI | http://localhost:8000/docs |
+| ReDoc | http://localhost:8000/redoc |
+| OpenAPI JSON | http://localhost:8000/openapi.json |
+
+### 테스트
+
+테스트는 현업에서 많이 쓰는 계층 기준으로 분리합니다.
+
+| Path | Purpose |
+|------|---------|
+| `tests/unit` | 모델, 서비스, 저장소, 순수 유틸 단위 검증 |
+| `tests/integration/api` | FastAPI 라우트, 미들웨어, Problem Details 응답 검증 |
+| `tests/integration/db` | Alembic 마이그레이션과 DB 스키마 검증 |
+| `tests/conftest.py` | 공용 fixture, 테스트 DB 세션, API client override |
+| `tests/factories.py` | 테스트 데이터 생성 helper |
+
+```bash
+# 전체 테스트
+uv run pytest
+
+# 단위 테스트만 실행
+uv run pytest -m unit
+
+# 통합 테스트만 실행
+uv run pytest -m integration
+```
+
+### 인증 API
+
+현재 인증 기능은 이메일/비밀번호 기반 회원가입, 로그인, access token 검증, refresh token 회전/폐기까지 연결되어 있습니다. Access token은 응답 body로 반환하고, refresh token은 `HttpOnly` 쿠키로만 전달합니다.
+
+| Method | Path | Status |
+|--------|------|--------|
+| POST | `/auth/signup` | 사용자 생성, Argon2 비밀번호 해싱, access token 발급, refresh token 쿠키 설정 |
+| POST | `/auth/login` | 비밀번호 검증, access token 발급, refresh token 쿠키 설정 |
+| GET | `/auth/me` | `Authorization: Bearer <access_token>` 기반 현재 사용자 조회 |
+| POST | `/auth/refresh` | `refresh_token` HttpOnly 쿠키 기반 refresh token 회전, 새 access token 발급, 쿠키 갱신 |
+| POST | `/auth/logout` | 현재 refresh token 폐기 및 `refresh_token` 쿠키 삭제 |
+
+### Access Token 정책
+
+- Access token TTL 기본값은 `15분`입니다.
+- 알고리즘은 `HS256`이며, 로컬 기본 secret은 개발용입니다. 운영 환경은 `ACCESS_TOKEN_SECRET_KEY`를 반드시 별도로 설정해야 합니다.
+- 응답에는 `access_token`, `token_type`, `expires_in`, `user`를 반환합니다.
+- `/auth/me`는 `Authorization: Bearer <access_token>` 헤더를 사용합니다.
+
+### Refresh Token 정책
+
+- 저장소에는 refresh token 원문을 저장하지 않고 `sha256` 해시만 저장합니다.
+- 저장소는 `REFRESH_TOKEN_STORE`로 선택합니다. 기본값은 `mysql`이고, Docker Compose 로컬 환경은 `redis`를 사용합니다.
+- Redis 저장소는 active token 만료 시점 이후에도 재사용 탐지를 위해 `REFRESH_TOKEN_REDIS_RETENTION_SECONDS`만큼 token metadata를 보존합니다.
+- refresh token TTL 기본값은 `14일`입니다.
+- 성공적으로 회전하면 기존 row는 `ROTATED`, 신규 row는 `ACTIVE` 상태가 됩니다.
+- 이미 `ROTATED`, `REVOKED`, `EXPIRED` 상태인 token을 다시 사용하면 `401 REFRESH_TOKEN_REUSED`로 거부합니다.
+- 쿠키 이름은 `refresh_token`, 속성은 `HttpOnly`, `SameSite=Lax`, `Path=/auth`입니다. 로컬 환경은 `Secure=false`, 운영 환경은 기본 `Secure=true`로 동작합니다.
+
+## 📚 Docs
+
+- [개발 컨벤션](docs/CONVENTIONS.md): Git 브랜치 전략, 커밋 컨벤션, PR 규칙, 로그 기준
+
 ---
 
 ## 🗺 Roadmap

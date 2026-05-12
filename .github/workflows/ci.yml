@@ -16,7 +16,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.12"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -25,4 +25,4 @@ jobs:
         run: uv sync
 
       - name: Run tests
-        run: uv run pytest --tb=short -q || echo "No tests found yet"
+        run: uv run pytest --tb=short -q
