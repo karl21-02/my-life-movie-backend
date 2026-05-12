@@ -2,7 +2,7 @@ name: Deploy
 
 on:
   push:
-    branches: [develop]
+    branches: [main]
 
 jobs:
   deploy:
@@ -42,8 +42,8 @@ jobs:
             -p 22222 \
             ec2-user@localhost << 'ENDSSH'
           cd ~/my-life-movie-backend
-          git fetch origin develop
-          git reset --hard origin/develop
+          git fetch origin main
+          git reset --hard origin/main
           docker-compose -f docker-compose.prod.yml up -d --build
           docker-compose -f docker-compose.prod.yml exec -T my-life-movie-backend uv run alembic upgrade head
           ENDSSH
