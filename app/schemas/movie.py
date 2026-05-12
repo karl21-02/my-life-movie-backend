@@ -1,5 +1,6 @@
-from pydantic import BaseModel
-from typing import Optional
+from typing import Any, Optional
+
+from pydantic import BaseModel, Field
 
 
 class CreateDraftRequest(BaseModel):
@@ -22,6 +23,8 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     ai_question: str
     current_draft: str
+    story_brief: dict[str, Any]
+    scene_plan: list[dict[str, Any]]
 
 
 class FileUploadResponse(BaseModel):
@@ -36,3 +39,6 @@ class SummaryResponse(BaseModel):
     files: list[dict]
     theme: dict
     music: Optional[dict]
+    story_brief: dict[str, Any] | None = None
+    scene_plan: list[dict[str, Any]] = Field(default_factory=list)
+    generation_prompt: str | None = None
