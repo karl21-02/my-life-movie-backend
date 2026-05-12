@@ -52,7 +52,10 @@ def test_chat_returns_ai_question_and_draft(api_client):
     body = response.json()
     assert "ai_question" in body
     assert "current_draft" in body
+    assert "story_brief" in body
+    assert "scene_plan" in body
     assert len(body["ai_question"]) > 0
+    assert len(body["scene_plan"]) > 0
 
 
 def test_chat_to_unknown_movie_returns_404(api_client):
@@ -85,7 +88,7 @@ def test_chat_returns_timeout_message_when_gpt_times_out(api_client, monkeypatch
     async def fake_gpt_timeout(api_key, history):
         raise APITimeoutError(request=httpx.Request("POST", "https://api.openai.com"))
 
-    monkeypatch.setattr("app.api.movies.router._call_gpt", fake_gpt_timeout)
+    monkeypatch.setattr("app.services.story_generation_service._call_gpt", fake_gpt_timeout)
     monkeypatch.setattr("app.api.movies.router.get_settings", lambda: Settings(openai_api_key="fake-key"))
 
     movie_id = _create_draft(api_client)
@@ -93,6 +96,7 @@ def test_chat_returns_timeout_message_when_gpt_times_out(api_client, monkeypatch
 
     assert response.status_code == 200
     assert "초과" in response.json()["ai_question"]
+    assert len(response.json()["scene_plan"]) > 0
 
 
 def test_get_chat_history_for_unknown_movie_returns_404(api_client):

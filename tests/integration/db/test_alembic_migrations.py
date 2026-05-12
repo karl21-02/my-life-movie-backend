@@ -37,6 +37,9 @@ def test_alembic_upgrade_head_creates_auth_tables(tmp_path, monkeypatch):
             "user_id",
             "theme_id",
             "status",
+            "story_brief",
+            "scene_plan",
+            "generation_prompt",
         }
 
         with engine.connect() as connection:
@@ -44,7 +47,7 @@ def test_alembic_upgrade_head_creates_auth_tables(tmp_path, monkeypatch):
                 text("SELECT version_num FROM alembic_version"),
             ).scalar_one()
 
-        assert version == "20260509_0003"
+        assert version == "20260513_0004"
         engine.dispose()
     finally:
         get_settings.cache_clear()
