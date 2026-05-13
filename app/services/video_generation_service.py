@@ -75,12 +75,15 @@ class VideoGenerationService:
         job_id: int,
         output_url: str,
         thumbnail_url: str | None = None,
+        provider_job_id: str | None = None,
     ) -> VideoGenerationJob:
         job = self._get_job_or_raise(job_id)
         self._ensure_status(job, allowed=(VideoGenerationJobStatus.RUNNING,))
 
         job.status = VideoGenerationJobStatus.SUCCEEDED
         job.progress = 100
+        if provider_job_id is not None:
+            job.provider_job_id = provider_job_id
         job.output_url = output_url
         job.thumbnail_url = thumbnail_url
         job.completed_at = now_utc()
