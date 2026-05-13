@@ -5,7 +5,7 @@ from app.core.logging import configure_logging, get_logger
 from app.db.session import get_session_factory
 from app.repositories.movie_repository import SQLAlchemyMovieRepository
 from app.repositories.video_generation_job_repository import SQLAlchemyVideoGenerationJobRepository
-from app.services.video_generation_provider import MockVideoGenerationProvider
+from app.services.video_generation_provider import build_video_generation_provider
 from app.services.video_generation_service import VideoGenerationService
 from app.services.video_generation_worker_service import VideoGenerationWorkerService
 
@@ -13,13 +13,14 @@ logger = get_logger(__name__)
 
 
 def create_worker(db) -> VideoGenerationWorkerService:
+    settings = get_settings()
     generation_service = VideoGenerationService(
         movie_repository=SQLAlchemyMovieRepository(db),
         job_repository=SQLAlchemyVideoGenerationJobRepository(db),
     )
     return VideoGenerationWorkerService(
         generation_service=generation_service,
-        provider=MockVideoGenerationProvider(),
+        provider=build_video_generation_provider(settings),
     )
 
 

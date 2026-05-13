@@ -25,6 +25,12 @@ class Settings:
     spotify_client_id: str = ""
     spotify_client_secret: str = ""
     openai_api_key: str = ""
+    video_generation_provider: str = "auto"
+    fal_key: str = ""
+    fal_model_id: str = "fal-ai/wan-alpha"
+    fal_queue_base_url: str = "https://queue.fal.run"
+    fal_poll_interval_seconds: float = 5
+    fal_max_wait_seconds: int = 900
     video_generation_worker_poll_interval_seconds: int = 5
 
 
@@ -47,6 +53,13 @@ def parse_int_env(value: str | None, default: int) -> int:
         return default
 
     return int(value)
+
+
+def parse_float_env(value: str | None, default: float) -> float:
+    if value is None:
+        return default
+
+    return float(value)
 
 
 @lru_cache
@@ -87,6 +100,18 @@ def get_settings() -> Settings:
         spotify_client_id=os.getenv("SPOTIFY_CLIENT_ID", ""),
         spotify_client_secret=os.getenv("SPOTIFY_CLIENT_SECRET", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+        video_generation_provider=os.getenv("VIDEO_GENERATION_PROVIDER", "auto").strip().lower(),
+        fal_key=os.getenv("FAL_KEY", ""),
+        fal_model_id=os.getenv("FAL_MODEL_ID", "fal-ai/wan-alpha"),
+        fal_queue_base_url=os.getenv("FAL_QUEUE_BASE_URL", "https://queue.fal.run").rstrip("/"),
+        fal_poll_interval_seconds=parse_float_env(
+            os.getenv("FAL_POLL_INTERVAL_SECONDS"),
+            5,
+        ),
+        fal_max_wait_seconds=parse_int_env(
+            os.getenv("FAL_MAX_WAIT_SECONDS"),
+            900,
+        ),
         video_generation_worker_poll_interval_seconds=parse_int_env(
             os.getenv("VIDEO_GENERATION_WORKER_POLL_INTERVAL_SECONDS"),
             5,
