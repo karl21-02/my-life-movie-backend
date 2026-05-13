@@ -78,7 +78,12 @@ def _get_movie_or_403(repo: SQLAlchemyMovieRepository, movie_id: int, user_id: i
     return movie
 
 
-@router.post("/draft", response_model=CreateDraftResponse)
+@router.post(
+    "/draft",
+    response_model=CreateDraftResponse,
+    summary="영화 초안 생성",
+    description="테마를 선택해 영화 제작 초안을 생성하고 이후 단계에서 사용할 movie_id를 반환합니다.",
+)
 async def create_draft(
     request: CreateDraftRequest,
     db: Session = Depends(get_db_session),
@@ -90,7 +95,11 @@ async def create_draft(
     return CreateDraftResponse(movie_id=movie.id, status=movie.status.value)
 
 
-@router.put("/{movie_id}/music")
+@router.put(
+    "/{movie_id}/music",
+    summary="영화 음악 선택",
+    description="현재 사용자의 특정 영화에 선택한 음악 ID를 저장합니다.",
+)
 async def update_music(
     movie_id: int,
     request: UpdateMusicRequest,
@@ -105,7 +114,12 @@ async def update_music(
     return {"movie_id": movie.id, "music_id": movie.music_id}
 
 
-@router.post("/{movie_id}/files", response_model=FileUploadResponse)
+@router.post(
+    "/{movie_id}/files",
+    response_model=FileUploadResponse,
+    summary="영화 참고 파일 업로드",
+    description="영화 생성에 참고할 사진, 영상, 문서 파일 메타데이터를 영화에 저장합니다.",
+)
 async def upload_file(
     movie_id: int,
     file: UploadFile = File(...),
@@ -138,7 +152,15 @@ async def upload_file(
     return FileUploadResponse(**file_info)
 
 
-@router.post("/{movie_id}/chat", response_model=ChatResponse)
+@router.post(
+    "/{movie_id}/chat",
+    response_model=ChatResponse,
+    summary="AI 이야기 대화",
+    description=(
+        "사용자 메시지를 기반으로 AI 역질문, 이야기 초안, 영상 생성용 story brief, "
+        "scene plan, generation prompt를 갱신합니다."
+    ),
+)
 async def chat_prompt(
     movie_id: int,
     request: ChatRequest,
@@ -174,7 +196,11 @@ async def chat_prompt(
     )
 
 
-@router.get("/{movie_id}/chat")
+@router.get(
+    "/{movie_id}/chat",
+    summary="AI 대화 이력 조회",
+    description="현재 사용자의 특정 영화에 저장된 AI 대화 이력을 반환합니다.",
+)
 async def get_chat_history(
     movie_id: int,
     db: Session = Depends(get_db_session),
@@ -186,7 +212,12 @@ async def get_chat_history(
     return {"history": movie.chat_history or []}
 
 
-@router.get("/{movie_id}/summary", response_model=SummaryResponse)
+@router.get(
+    "/{movie_id}/summary",
+    response_model=SummaryResponse,
+    summary="영화 생성 입력 요약 조회",
+    description="최종 확인 화면에서 사용할 프롬프트, 파일, 테마, 음악, 구조화 스토리 정보를 반환합니다.",
+)
 async def get_summary(
     movie_id: int,
     db: Session = Depends(get_db_session),
@@ -352,7 +383,13 @@ async def get_movie(
     )
 
 
-@router.delete("/{movie_id}", response_model=schemas.DeleteMovieResponse)
+@router.delete(
+    "/{movie_id}",
+    response_model=schemas.DeleteMovieResponse,
+    summary="영화 삭제",
+    description="현재 사용자의 특정 영화와 연결된 생성 Job, 추천 결과를 함께 삭제합니다.",
+    responses=MOVIE_PROBLEM_RESPONSES,
+)
 async def delete_movie(
     movie_id: int,
     db: Session = Depends(get_db_session),
@@ -365,7 +402,13 @@ async def delete_movie(
     return schemas.DeleteMovieResponse(message="영화가 삭제되었습니다.")
 
 
-@router.get("/{movie_id}/download", response_model=schemas.DownloadMovieResponse)
+@router.get(
+    "/{movie_id}/download",
+    response_model=schemas.DownloadMovieResponse,
+    summary="영화 다운로드 정보 조회",
+    description="생성 완료된 영화의 다운로드 URL과 파일 정보를 반환합니다.",
+    responses=MOVIE_PROBLEM_RESPONSES,
+)
 async def download_movie(
     movie_id: int,
     db: Session = Depends(get_db_session),
@@ -387,7 +430,12 @@ async def download_movie(
     )
 
 
-@router.get("/{movie_id}/download/file")
+@router.get(
+    "/{movie_id}/download/file",
+    summary="영화 파일 다운로드",
+    description="생성 완료된 영화 파일을 video/mp4 응답으로 다운로드합니다.",
+    responses=MOVIE_PROBLEM_RESPONSES,
+)
 async def download_movie_file(
     movie_id: int,
     db: Session = Depends(get_db_session),
@@ -413,7 +461,13 @@ async def download_movie_file(
     )
 
 
-@router.post("/{movie_id}/share", response_model=schemas.ShareMovieResponse)
+@router.post(
+    "/{movie_id}/share",
+    response_model=schemas.ShareMovieResponse,
+    summary="영화 공유 링크 생성",
+    description="현재 사용자의 특정 영화에 접근할 수 있는 공유 URL을 생성해 반환합니다.",
+    responses=MOVIE_PROBLEM_RESPONSES,
+)
 async def share_movie(
     movie_id: int,
     request: Request,
@@ -434,13 +488,19 @@ async def share_movie(
     )
 
 
-@router.get("/{movie_id}/similar", response_model=schemas.SimilarMoviesResponse)
+@router.get(
+    "/{movie_id}/similar",
+    response_model=schemas.SimilarMoviesResponse,
+    summary="유사 영화 추천 조회",
+    description="저장된 추천 결과가 있으면 재사용하고, 없으면 영화 입력 데이터를 기반으로 TMDB 유사 영화를 추천해 저장합니다.",
+    responses=MOVIE_PROBLEM_RESPONSES,
+)
 async def get_similar_movies(
     movie_id: int,
     db: Session = Depends(get_db_session),
     current_user: AccessTokenClaims = Depends(get_current_user),
 ) -> schemas.SimilarMoviesResponse:
-    """현재 사용자 영화의 테마 기반으로 유사한 유명 영화 최대 4편을 추천합니다."""
+    """현재 사용자 영화의 입력 데이터 기반으로 유사한 영화 최대 4편을 추천합니다."""
     movie_repo = SQLAlchemyMovieRepository(db)
     recommendation_repo = SQLAlchemyMovieRecommendationRepository(db)
     movie = _get_movie_or_403(movie_repo, movie_id, current_user.user_id)
