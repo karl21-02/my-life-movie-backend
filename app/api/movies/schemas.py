@@ -11,6 +11,8 @@ class SimilarMovie(BaseModel):
     id: int
     title: str
     thumbnail: str
+    external_url: str | None = None
+    provider: str = "fallback"
 
 
 class Movie(BaseModel):

@@ -114,6 +114,7 @@ def test_get_movie_returns_detail(api_client, db_session: Session, mock_user: Ac
     assert isinstance(body["ost"], list)
     assert len(body["similar_movies"]) > 0
     assert body["similar_movies"][0]["title"] == "브렉퍼스트 클럽"
+    assert body["similar_movies"][0]["external_url"] is not None
 
 
 def test_get_movie_not_found_returns_problem_detail(api_client):
@@ -254,6 +255,8 @@ def test_get_similar_movies_item_shape(api_client, db_session: Session, mock_use
     assert "id" in first
     assert "title" in first
     assert "thumbnail" in first
+    assert "external_url" in first
+    assert "provider" in first
 
 
 def test_get_similar_movies_limit(api_client, db_session: Session, mock_user: AccessTokenClaims):

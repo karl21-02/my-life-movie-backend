@@ -31,6 +31,7 @@ from app.services.story_generation_service import generate_story_inputs
 from app.services.video_generation_provider import resolve_video_generation_provider_name
 from app.services.video_generation_service import VideoGenerationService
 from app.services.storage_service import build_storage_service
+from app.services.movie_recommendation_service import build_movie_recommendation_service
 
 router = APIRouter(prefix="/api/movies", tags=["movies"])
 
@@ -44,45 +45,6 @@ THEME_NAMES = {
     5: "재패니즈 노스탤지아",
     6: "지브리",
 }
-FAMOUS_MOVIES_BY_GENRE = {
-    "하이틴": [
-        {"id": 101, "title": "브렉퍼스트 클럽", "thumbnail": "https://picsum.photos/seed/fam101/400/600"},
-        {"id": 102, "title": "퀸카로 살아남는 법", "thumbnail": "https://picsum.photos/seed/fam102/400/600"},
-        {"id": 103, "title": "사랑할 수 없는 10가지 이유", "thumbnail": "https://picsum.photos/seed/fam103/400/600"},
-        {"id": 104, "title": "이지 에이", "thumbnail": "https://picsum.photos/seed/fam104/400/600"},
-    ],
-    "사이버펑크": [
-        {"id": 201, "title": "블레이드 러너 2049", "thumbnail": "https://picsum.photos/seed/fam201/400/600"},
-        {"id": 202, "title": "매트릭스", "thumbnail": "https://picsum.photos/seed/fam202/400/600"},
-        {"id": 203, "title": "공각기동대", "thumbnail": "https://picsum.photos/seed/fam203/400/600"},
-        {"id": 204, "title": "아키라", "thumbnail": "https://picsum.photos/seed/fam204/400/600"},
-    ],
-    "무성영화": [
-        {"id": 301, "title": "아티스트", "thumbnail": "https://picsum.photos/seed/fam301/400/600"},
-        {"id": 302, "title": "메트로폴리스", "thumbnail": "https://picsum.photos/seed/fam302/400/600"},
-        {"id": 303, "title": "시티 라이트", "thumbnail": "https://picsum.photos/seed/fam303/400/600"},
-        {"id": 304, "title": "황금광 시대", "thumbnail": "https://picsum.photos/seed/fam304/400/600"},
-    ],
-    "동화": [
-        {"id": 401, "title": "신데렐라", "thumbnail": "https://picsum.photos/seed/fam401/400/600"},
-        {"id": 402, "title": "미녀와 야수", "thumbnail": "https://picsum.photos/seed/fam402/400/600"},
-        {"id": 403, "title": "라푼젤", "thumbnail": "https://picsum.photos/seed/fam403/400/600"},
-        {"id": 404, "title": "마법에 걸린 사랑", "thumbnail": "https://picsum.photos/seed/fam404/400/600"},
-    ],
-    "재패니즈 노스탤지아": [
-        {"id": 501, "title": "이 세상의 한 구석에", "thumbnail": "https://picsum.photos/seed/fam501/400/600"},
-        {"id": 502, "title": "추억은 방울방울", "thumbnail": "https://picsum.photos/seed/fam502/400/600"},
-        {"id": 503, "title": "귀를 기울이면", "thumbnail": "https://picsum.photos/seed/fam503/400/600"},
-        {"id": 504, "title": "초속 5센티미터", "thumbnail": "https://picsum.photos/seed/fam504/400/600"},
-    ],
-    "지브리": [
-        {"id": 601, "title": "센과 치히로의 행방불명", "thumbnail": "https://picsum.photos/seed/fam601/400/600"},
-        {"id": 602, "title": "하울의 움직이는 성", "thumbnail": "https://picsum.photos/seed/fam602/400/600"},
-        {"id": 603, "title": "모노노케 히메", "thumbnail": "https://picsum.photos/seed/fam603/400/600"},
-        {"id": 604, "title": "마녀 배달부 키키", "thumbnail": "https://picsum.photos/seed/fam604/400/600"},
-    ],
-}
-
 # 영화 조회 시 존재 여부와 소유자 권한을 확인하는 헬퍼 함수
 def _get_movie_or_403(repo: SQLAlchemyMovieRepository, movie_id: int, user_id: int):
     movie = repo.get_by_id(movie_id)
@@ -613,6 +575,6 @@ def build_movie_ost(movie: Movie) -> list[schemas.OstTrack]:
 
 def build_similar_movies(genre: str) -> list[schemas.SimilarMovie]:
     return [
-        schemas.SimilarMovie(**movie)
-        for movie in FAMOUS_MOVIES_BY_GENRE.get(genre, [])[:4]
+        schemas.SimilarMovie(**movie.__dict__)
+        for movie in build_movie_recommendation_service(get_settings()).recommend_by_genre(genre)
     ]

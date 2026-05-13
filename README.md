@@ -149,6 +149,19 @@ S3_PRESIGNED_URL_EXPIRE_SECONDS=900
 
 로컬 개발에서 IAM role을 쓰지 않는 경우에만 `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`를 설정합니다. 실제 키는 저장소에 커밋하지 않습니다.
 
+### 비슷한 영화 추천
+
+기본값은 테마별 fallback 추천입니다. 실제 영화 포스터와 TMDB 상세 링크를 사용하려면 TMDB Read Access Token을 설정합니다. 토큰이 없거나 TMDB 호출이 실패하면 fallback 추천을 반환합니다.
+
+```env
+TMDB_ACCESS_TOKEN=your-tmdb-read-access-token
+TMDB_API_BASE_URL=https://api.themoviedb.org/3
+TMDB_IMAGE_BASE_URL=https://image.tmdb.org/t/p
+TMDB_POSTER_SIZE=w500
+TMDB_LANGUAGE=ko-KR
+TMDB_TIMEOUT_SECONDS=5
+```
+
 ### DB 마이그레이션
 
 개발 DB가 실행 중일 때 Alembic으로 테이블을 생성합니다.

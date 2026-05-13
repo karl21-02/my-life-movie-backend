@@ -52,6 +52,12 @@ class Settings:
     s3_generated_thumbnail_prefix: str = "generated/thumbnails"
     s3_music_prefix: str = "music"
     s3_presigned_url_expire_seconds: int = 900
+    tmdb_access_token: str = ""
+    tmdb_api_base_url: str = "https://api.themoviedb.org/3"
+    tmdb_image_base_url: str = "https://image.tmdb.org/t/p"
+    tmdb_poster_size: str = "w500"
+    tmdb_language: str = "ko-KR"
+    tmdb_timeout_seconds: float = 5
 
 
 def parse_csv_env(value: str | None, default: list[str]) -> list[str]:
@@ -165,4 +171,10 @@ def get_settings() -> Settings:
             os.getenv("S3_PRESIGNED_URL_EXPIRE_SECONDS"),
             900,
         ),
+        tmdb_access_token=os.getenv("TMDB_ACCESS_TOKEN", ""),
+        tmdb_api_base_url=os.getenv("TMDB_API_BASE_URL", "https://api.themoviedb.org/3").rstrip("/"),
+        tmdb_image_base_url=os.getenv("TMDB_IMAGE_BASE_URL", "https://image.tmdb.org/t/p").rstrip("/"),
+        tmdb_poster_size=os.getenv("TMDB_POSTER_SIZE", "w500").strip("/"),
+        tmdb_language=os.getenv("TMDB_LANGUAGE", "ko-KR"),
+        tmdb_timeout_seconds=parse_float_env(os.getenv("TMDB_TIMEOUT_SECONDS"), 5),
     )
