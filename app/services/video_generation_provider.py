@@ -234,7 +234,7 @@ class VideoGenerationProviderTimeoutError(VideoGenerationProviderError):
     pass
 
 
-MAX_OPENAI_VIDEO_PROMPT_LENGTH = 1800
+MAX_OPENAI_VIDEO_PROMPT_LENGTH = 2800
 
 
 def build_video_generation_provider(settings: Settings) -> VideoGenerationProvider:
@@ -293,14 +293,14 @@ def build_fal_payload(input_snapshot: dict) -> dict:
 
     return {
         "prompt": prompt,
-        "num_frames": 81,
-        "fps": 16,
-        "num_inference_steps": 8,
-        "resolution": "480p",
+        "num_frames": 121,
+        "fps": 24,
+        "num_inference_steps": 24,
+        "resolution": "720p",
         "aspect_ratio": "16:9",
         "enable_safety_checker": True,
         "video_output_type": "X264 (.mp4)",
-        "video_quality": "medium",
+        "video_quality": "high",
         "video_write_mode": "balanced",
     }
 
@@ -313,10 +313,11 @@ def build_openai_video_prompt(input_snapshot: dict) -> str:
     story = as_dict(input_snapshot.get("story"))
     style = as_dict(input_snapshot.get("style"))
     audio_direction = as_dict(input_snapshot.get("audio_direction"))
-    scenes = extract_scene_summaries(input_snapshot.get("scenes"))
+    assets = as_dict(input_snapshot.get("assets"))
+    scenes = extract_scene_blueprint(input_snapshot.get("scenes"))
 
     prompt_parts = [
-        "Create a premium cinematic life-movie clip with realistic human emotion and natural motion.",
+        "Create a premium cinematic short-film moment, not a slideshow or montage.",
         f"Core story: {base_prompt}",
         optional_prompt_line("Title", story.get("title")),
         optional_prompt_line("Logline", story.get("logline")),
@@ -328,17 +329,33 @@ def build_openai_video_prompt(input_snapshot: dict) -> str:
         optional_prompt_line("Ending tone", story.get("ending_tone")),
         optional_prompt_line("Visual style", style.get("visual_style")),
         optional_prompt_line("Music mood reference", audio_direction.get("music_id")),
-        optional_prompt_line("Primary scene focus", scenes[0] if scenes else None),
-        optional_prompt_line("Supporting scene details", " / ".join(scenes[1:3]) if len(scenes) > 1 else None),
+        optional_prompt_block("Scene blueprint", scenes),
+        optional_prompt_line("Reference asset guidance", summarize_assets(assets)),
         (
-            "Cinematography: one coherent cinematic shot, 16:9 composition, 35mm film look, "
-            "slow dolly-in or gentle handheld movement, stable framing, shallow depth of field, "
-            "soft natural light, rich but realistic color grading."
+            "Directorial intent: express the user's memory as a believable lived moment with "
+            "a clear beginning, emotional turn, and closing image inside one continuous scene."
         ),
         (
-            "Quality constraints: no on-screen text, no subtitles, no logos, no watermarks, "
-            "no distorted faces or hands, no abrupt cuts, no flicker, no low-resolution blur, "
-            "no surreal artifacts unless explicitly required by the story."
+            "Subject continuity: keep one consistent protagonist, consistent age, face, clothing, "
+            "hair, body scale, and spatial layout throughout the clip. Avoid identity drift."
+        ),
+        (
+            "Cinematography: one coherent 16:9 cinematic shot, 35mm film look, slow dolly-in "
+            "or subtle handheld movement, stable framing, shallow depth of field, natural lens breathing, "
+            "layered foreground and background, no random camera jumps."
+        ),
+        (
+            "Lighting and texture: soft motivated light, realistic skin texture, atmospheric depth, "
+            "rich but restrained color grading, gentle film grain, physically plausible shadows and reflections."
+        ),
+        (
+            "Motion quality: natural human micro-expressions, believable hand movement, calm pacing, "
+            "no fast cuts, no sudden pose changes, no object warping, no floating props."
+        ),
+        (
+            "Strict quality constraints: no on-screen text, no captions, no subtitles, no logos, no watermarks, "
+            "no duplicated people, no distorted faces or hands, no melted objects, no flicker, "
+            "no low-resolution blur, no surreal artifacts unless explicitly required by the story."
         ),
     ]
     prompt = "\n".join(part for part in prompt_parts if part)
@@ -362,6 +379,13 @@ def optional_prompt_line(label: str, value: Any) -> str | None:
     return f"{label}: {text}"
 
 
+def optional_prompt_block(label: str, values: list[str]) -> str | None:
+    if not values:
+        return None
+    lines = "\n".join(f"- {value}" for value in values)
+    return f"{label}:\n{lines}"
+
+
 def join_prompt_values(value: Any, *, limit: int = 5) -> str:
     if isinstance(value, list):
         items = [normalize_prompt_text(item) for item in value[:limit]]
@@ -369,29 +393,58 @@ def join_prompt_values(value: Any, *, limit: int = 5) -> str:
     return normalize_prompt_text(value)
 
 
-def extract_scene_summaries(value: Any, *, limit: int = 3) -> list[str]:
+def extract_scene_blueprint(value: Any, *, limit: int = 4) -> list[str]:
     if not isinstance(value, list):
         return []
 
-    summaries: list[str] = []
+    scenes: list[str] = []
     for item in value:
-        summary = scene_summary_text(item)
-        if summary:
-            summaries.append(summary)
-        if len(summaries) >= limit:
+        scene = scene_blueprint_text(item)
+        if scene:
+            scenes.append(scene)
+        if len(scenes) >= limit:
             break
-    return summaries
+    return scenes
 
 
-def scene_summary_text(value: Any) -> str:
+def scene_blueprint_text(value: Any) -> str:
     if isinstance(value, dict):
-        for key in ("summary", "visual", "description", "action"):
+        summary = ""
+        for key in ("visual_prompt", "summary", "visual", "description", "action"):
             summary = normalize_prompt_text(value.get(key))
             if summary:
-                order = normalize_prompt_text(value.get("order"))
-                return f"{order}. {summary}" if order else summary
-        return ""
+                break
+        if not summary:
+            return ""
+        order = normalize_prompt_text(value.get("order"))
+        emotion = normalize_prompt_text(value.get("emotion"))
+        narration = normalize_prompt_text(value.get("narration"))
+        camera = normalize_prompt_text(value.get("camera"))
+        details = [
+            summary,
+            f"emotion: {emotion}" if emotion else "",
+            f"camera: {camera}" if camera else "",
+            f"implied narration mood: {narration}" if narration else "",
+        ]
+        text = " | ".join(detail for detail in details if detail)
+        return f"{order}. {text}" if order else text
     return normalize_prompt_text(value)
+
+
+def summarize_assets(assets: dict) -> str:
+    image_count = len(assets.get("images") or []) if isinstance(assets.get("images"), list) else 0
+    video_count = len(assets.get("videos") or []) if isinstance(assets.get("videos"), list) else 0
+    document_count = len(assets.get("documents") or []) if isinstance(assets.get("documents"), list) else 0
+    summary_parts = []
+    if image_count:
+        summary_parts.append(f"{image_count} uploaded image reference(s) for mood, place, and visual memory")
+    if video_count:
+        summary_parts.append(f"{video_count} uploaded video reference(s) for motion and atmosphere")
+    if document_count:
+        summary_parts.append(f"{document_count} uploaded document reference(s) for story facts only")
+    if not summary_parts:
+        return ""
+    return "; ".join(summary_parts) + ". Do not reproduce private text or identifiable details literally."
 
 
 def truncate_prompt(prompt: str, max_length: int) -> str:

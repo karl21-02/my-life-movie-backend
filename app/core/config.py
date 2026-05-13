@@ -29,7 +29,7 @@ class Settings:
     generated_media_dir: str = "generated"
     openai_video_model: str = "sora-2"
     openai_video_size: str = "1280x720"
-    openai_video_seconds: str = "4"
+    openai_video_seconds: str = "8"
     openai_video_poll_interval_seconds: float = 10
     openai_video_max_wait_seconds: int = 900
     fal_key: str = ""
@@ -130,7 +130,7 @@ def get_settings() -> Settings:
         generated_media_dir=os.getenv("GENERATED_MEDIA_DIR", "generated"),
         openai_video_model=os.getenv("OPENAI_VIDEO_MODEL", "sora-2"),
         openai_video_size=os.getenv("OPENAI_VIDEO_SIZE", "1280x720"),
-        openai_video_seconds=os.getenv("OPENAI_VIDEO_SECONDS", "4"),
+        openai_video_seconds=os.getenv("OPENAI_VIDEO_SECONDS", "8"),
         openai_video_poll_interval_seconds=parse_float_env(
             os.getenv("OPENAI_VIDEO_POLL_INTERVAL_SECONDS"),
             10,
