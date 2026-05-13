@@ -1,8 +1,9 @@
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from app.core.errors import AppError
 from app.models.movie import MovieStatus
-from app.models.video_generation_job import VideoGenerationJob
+from app.models.video_generation_job import VideoGenerationJob, VideoGenerationJobStatus
 from app.repositories.movie_repository import MovieRepository
 from app.repositories.video_generation_job_repository import VideoGenerationJobRepository
 from app.services.video_generation_input_builder import build_video_generation_input
@@ -58,6 +59,98 @@ class VideoGenerationService:
             raise generation_job_not_found_error()
         return job
 
+    def start_generation(self, *, job_id: int, provider_job_id: str | None = None) -> VideoGenerationJob:
+        job = self._get_job_or_raise(job_id)
+        self._ensure_status(job, allowed=(VideoGenerationJobStatus.QUEUED,))
+
+        job.status = VideoGenerationJobStatus.RUNNING
+        job.progress = max(job.progress, 1)
+        job.provider_job_id = provider_job_id
+        job.started_at = now_utc()
+        return self.job_repository.update(job)
+
+    def mark_generation_succeeded(
+        self,
+        *,
+        job_id: int,
+        output_url: str,
+        thumbnail_url: str | None = None,
+    ) -> VideoGenerationJob:
+        job = self._get_job_or_raise(job_id)
+        self._ensure_status(job, allowed=(VideoGenerationJobStatus.RUNNING,))
+
+        job.status = VideoGenerationJobStatus.SUCCEEDED
+        job.progress = 100
+        job.output_url = output_url
+        job.thumbnail_url = thumbnail_url
+        job.completed_at = now_utc()
+        self.job_repository.update(job)
+
+        movie = self.movie_repository.get_by_id(job.movie_id)
+        if movie is not None:
+            movie.status = MovieStatus.COMPLETED
+            self.movie_repository.update(movie)
+        return job
+
+    def mark_generation_failed(
+        self,
+        *,
+        job_id: int,
+        error_code: str,
+        error_message: str,
+    ) -> VideoGenerationJob:
+        job = self._get_job_or_raise(job_id)
+        self._ensure_status(
+            job,
+            allowed=(VideoGenerationJobStatus.QUEUED, VideoGenerationJobStatus.RUNNING),
+        )
+
+        job.status = VideoGenerationJobStatus.FAILED
+        job.error_code = error_code
+        job.error_message = error_message
+        job.completed_at = now_utc()
+        self.job_repository.update(job)
+
+        movie = self.movie_repository.get_by_id(job.movie_id)
+        if movie is not None:
+            movie.status = MovieStatus.FAILED
+            self.movie_repository.update(movie)
+        return job
+
+    def cancel_generation(self, *, movie_id: int, user_id: int) -> VideoGenerationJob:
+        movie = self.movie_repository.get_by_id(movie_id)
+        if movie is None:
+            raise generation_movie_not_found_error()
+        if movie.user_id != user_id:
+            raise generation_movie_forbidden_error()
+
+        job = self.job_repository.get_in_progress_by_movie_id(movie_id)
+        if job is None:
+            raise generation_job_not_found_error()
+
+        job.status = VideoGenerationJobStatus.CANCELED
+        job.completed_at = now_utc()
+        self.job_repository.update(job)
+
+        movie.status = MovieStatus.DRAFT
+        self.movie_repository.update(movie)
+        return job
+
+    def _get_job_or_raise(self, job_id: int) -> VideoGenerationJob:
+        job = self.job_repository.get_by_id(job_id)
+        if job is None:
+            raise generation_job_not_found_error()
+        return job
+
+    def _ensure_status(
+        self,
+        job: VideoGenerationJob,
+        *,
+        allowed: tuple[VideoGenerationJobStatus, ...],
+    ) -> None:
+        if job.status not in allowed:
+            raise generation_invalid_status_transition_error(job.status, allowed)
+
 
 def generation_movie_not_found_error() -> AppError:
     return AppError(
@@ -107,3 +200,23 @@ def generation_job_not_found_error() -> AppError:
         detail="영상 생성 작업을 찾을 수 없습니다.",
         type_="generation_job_not_found",
     )
+
+
+def generation_invalid_status_transition_error(
+    current_status: VideoGenerationJobStatus,
+    allowed_statuses: tuple[VideoGenerationJobStatus, ...],
+) -> AppError:
+    return AppError(
+        status_code=409,
+        code="GENERATION_INVALID_STATUS_TRANSITION",
+        title="Generation Invalid Status Transition",
+        detail=(
+            "영상 생성 작업 상태를 변경할 수 없습니다. "
+            f"현재 상태: {current_status.value}, 허용 상태: {', '.join(status.value for status in allowed_statuses)}"
+        ),
+        type_="generation_invalid_status_transition",
+    )
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)

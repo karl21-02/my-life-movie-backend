@@ -22,6 +22,9 @@ class VideoGenerationJobRepository(Protocol):
     ) -> VideoGenerationJob:
         ...
 
+    def get_by_id(self, job_id: int) -> VideoGenerationJob | None:
+        ...
+
     def get_latest_by_movie_id(self, movie_id: int) -> VideoGenerationJob | None:
         ...
 
@@ -56,6 +59,9 @@ class SQLAlchemyVideoGenerationJobRepository:
         self.session.commit()
         self.session.refresh(job)
         return job
+
+    def get_by_id(self, job_id: int) -> VideoGenerationJob | None:
+        return self.session.get(VideoGenerationJob, job_id)
 
     def get_latest_by_movie_id(self, movie_id: int) -> VideoGenerationJob | None:
         return self.session.scalar(

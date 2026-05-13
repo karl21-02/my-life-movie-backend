@@ -47,6 +47,17 @@ def test_get_latest_by_movie_id_returns_newest_job(db_session: Session):
     assert latest.id != first.id
 
 
+def test_get_by_id_returns_job(db_session: Session):
+    user, movie = _create_movie(db_session)
+    repository = SQLAlchemyVideoGenerationJobRepository(db_session)
+    job = repository.create(movie_id=movie.id, user_id=user.id, input_snapshot={"order": 1})
+
+    found = repository.get_by_id(job.id)
+
+    assert found is not None
+    assert found.id == job.id
+
+
 def test_get_in_progress_by_movie_id_returns_queued_or_running_job(db_session: Session):
     user, movie = _create_movie(db_session)
     repository = SQLAlchemyVideoGenerationJobRepository(db_session)

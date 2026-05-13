@@ -89,3 +89,84 @@ def test_get_latest_generation_returns_404_when_job_is_missing(db_session: Sessi
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.code == "GENERATION_JOB_NOT_FOUND"
+
+
+def test_start_generation_marks_job_running(db_session: Session):
+    user, movie = create_ready_movie(db_session)
+    service = create_service(db_session)
+    created = service.request_generation(movie_id=movie.id, user_id=user.id)
+
+    job = service.start_generation(job_id=created.job.id, provider_job_id="provider-1")
+
+    assert job.status == VideoGenerationJobStatus.RUNNING
+    assert job.progress == 1
+    assert job.provider_job_id == "provider-1"
+    assert job.started_at is not None
+
+
+def test_start_generation_rejects_terminal_job(db_session: Session):
+    user, movie = create_ready_movie(db_session)
+    service = create_service(db_session)
+    created = service.request_generation(movie_id=movie.id, user_id=user.id)
+    job = service.start_generation(job_id=created.job.id)
+    service.mark_generation_succeeded(job_id=job.id, output_url="https://cdn.example.com/movie.mp4")
+
+    with pytest.raises(AppError) as exc_info:
+        service.start_generation(job_id=job.id)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "GENERATION_INVALID_STATUS_TRANSITION"
+
+
+def test_mark_generation_succeeded_completes_job_and_movie(db_session: Session):
+    user, movie = create_ready_movie(db_session)
+    service = create_service(db_session)
+    created = service.request_generation(movie_id=movie.id, user_id=user.id)
+    service.start_generation(job_id=created.job.id)
+
+    job = service.mark_generation_succeeded(
+        job_id=created.job.id,
+        output_url="https://cdn.example.com/movie.mp4",
+        thumbnail_url="https://cdn.example.com/movie.jpg",
+    )
+
+    db_session.refresh(movie)
+    assert job.status == VideoGenerationJobStatus.SUCCEEDED
+    assert job.progress == 100
+    assert job.output_url == "https://cdn.example.com/movie.mp4"
+    assert job.thumbnail_url == "https://cdn.example.com/movie.jpg"
+    assert job.completed_at is not None
+    assert movie.status == MovieStatus.COMPLETED
+
+
+def test_mark_generation_failed_fails_job_and_movie(db_session: Session):
+    user, movie = create_ready_movie(db_session)
+    service = create_service(db_session)
+    created = service.request_generation(movie_id=movie.id, user_id=user.id)
+    service.start_generation(job_id=created.job.id)
+
+    job = service.mark_generation_failed(
+        job_id=created.job.id,
+        error_code="PROVIDER_TIMEOUT",
+        error_message="Provider request timed out.",
+    )
+
+    db_session.refresh(movie)
+    assert job.status == VideoGenerationJobStatus.FAILED
+    assert job.error_code == "PROVIDER_TIMEOUT"
+    assert job.error_message == "Provider request timed out."
+    assert job.completed_at is not None
+    assert movie.status == MovieStatus.FAILED
+
+
+def test_cancel_generation_cancels_in_progress_job_and_resets_movie(db_session: Session):
+    user, movie = create_ready_movie(db_session)
+    service = create_service(db_session)
+    service.request_generation(movie_id=movie.id, user_id=user.id)
+
+    job = service.cancel_generation(movie_id=movie.id, user_id=user.id)
+
+    db_session.refresh(movie)
+    assert job.status == VideoGenerationJobStatus.CANCELED
+    assert job.completed_at is not None
+    assert movie.status == MovieStatus.DRAFT
