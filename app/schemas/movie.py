@@ -42,3 +42,22 @@ class SummaryResponse(BaseModel):
     story_brief: dict[str, Any] | None = None
     scene_plan: list[dict[str, Any]] = Field(default_factory=list)
     generation_prompt: str | None = None
+
+
+class GenerationRequestResponse(BaseModel):
+    movie_id: int
+    job_id: int
+    status: str
+    progress: int
+    message: str
+
+
+class GenerationStatusResponse(BaseModel):
+    movie_id: int
+    job_id: int
+    status: str
+    progress: int
+    output_url: str | None = None
+    thumbnail_url: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None

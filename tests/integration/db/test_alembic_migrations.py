@@ -24,6 +24,7 @@ def test_alembic_upgrade_head_creates_auth_tables(tmp_path, monkeypatch):
         assert inspector.has_table("users")
         assert inspector.has_table("auth_refresh_tokens")
         assert inspector.has_table("movies")
+        assert inspector.has_table("video_generation_jobs")
         assert {column["name"] for column in inspector.get_columns("auth_refresh_tokens")} >= {
             "id",
             "user_id",
@@ -41,13 +42,26 @@ def test_alembic_upgrade_head_creates_auth_tables(tmp_path, monkeypatch):
             "scene_plan",
             "generation_prompt",
         }
+        assert {column["name"] for column in inspector.get_columns("video_generation_jobs")} >= {
+            "id",
+            "movie_id",
+            "user_id",
+            "status",
+            "provider",
+            "progress",
+            "input_snapshot",
+            "output_url",
+            "thumbnail_url",
+            "error_code",
+            "error_message",
+        }
 
         with engine.connect() as connection:
             version = connection.execute(
                 text("SELECT version_num FROM alembic_version"),
             ).scalar_one()
 
-        assert version == "20260513_0005"
+        assert version == "20260513_0006"
         engine.dispose()
     finally:
         get_settings.cache_clear()
