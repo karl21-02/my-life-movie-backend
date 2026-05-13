@@ -217,6 +217,29 @@ async def generate_movie(
     )
 
 
+@router.post("/{movie_id}/generation/cancel", response_model=GenerationStatusResponse)
+async def cancel_generation(
+    movie_id: int,
+    db: Session = Depends(get_db_session),
+    current_user: AccessTokenClaims = Depends(get_current_user),
+):
+    """진행 중인 영상 생성 Job을 취소합니다."""
+    job = _get_video_generation_service(db).cancel_generation(
+        movie_id=movie_id,
+        user_id=current_user.user_id,
+    )
+    return GenerationStatusResponse(
+        movie_id=job.movie_id,
+        job_id=job.id,
+        status=job.status.value,
+        progress=job.progress,
+        output_url=job.output_url,
+        thumbnail_url=job.thumbnail_url,
+        error_code=job.error_code,
+        error_message=job.error_message,
+    )
+
+
 @router.get("", response_model=list[schemas.MovieSummary])
 async def get_movies() -> list[schemas.MovieSummary]:
     """영화 목록을 반환한다."""

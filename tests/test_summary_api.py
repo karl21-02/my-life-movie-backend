@@ -123,6 +123,29 @@ def test_get_generation_status_without_job_returns_404(api_client):
     assert response.json()["code"] == "GENERATION_JOB_NOT_FOUND"
 
 
+def test_cancel_generation_marks_in_progress_job_canceled(api_client):
+    movie_id = _create_draft(api_client)
+    api_client.post(f"/api/movies/{movie_id}/chat", json={"message": "학창시절 이야기"})
+    created = api_client.post(f"/api/movies/{movie_id}/generate").json()
+
+    response = api_client.post(f"/api/movies/{movie_id}/generation/cancel")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["movie_id"] == movie_id
+    assert body["job_id"] == created["job_id"]
+    assert body["status"] == "CANCELED"
+
+
+def test_cancel_generation_without_in_progress_job_returns_404(api_client):
+    movie_id = _create_draft(api_client)
+
+    response = api_client.post(f"/api/movies/{movie_id}/generation/cancel")
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "GENERATION_JOB_NOT_FOUND"
+
+
 def test_generate_for_unknown_movie_returns_404(api_client):
     response = api_client.post("/api/movies/99999/generate")
 
