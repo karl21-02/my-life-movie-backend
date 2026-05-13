@@ -20,6 +20,8 @@ services:
       - --reload-dir
       - app
     environment:
+      UV_HTTP_TIMEOUT: ${UV_HTTP_TIMEOUT:-120}
+      UV_LINK_MODE: copy
       APP_ENV: local
       LOG_LEVEL: DEBUG
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,http://localhost:3002,http://127.0.0.1:3002
@@ -94,6 +96,8 @@ services:
       - -m
       - app.workers.video_generation_worker
     environment:
+      UV_HTTP_TIMEOUT: ${UV_HTTP_TIMEOUT:-120}
+      UV_LINK_MODE: copy
       APP_ENV: local
       LOG_LEVEL: DEBUG
       DATABASE_URL: mysql+pymysql://${MYSQL_USER:-my_life_movie}:${MYSQL_PASSWORD:-my_life_movie_password}@my-life-movie-mysql:3306/${MYSQL_DATABASE:-my_life_movie}
