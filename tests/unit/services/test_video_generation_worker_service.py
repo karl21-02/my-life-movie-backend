@@ -17,7 +17,7 @@ pytestmark = pytest.mark.unit
 
 
 class SuccessProvider:
-    def generate(self, input_snapshot: dict) -> VideoGenerationProviderResult:
+    def generate(self, input_snapshot: dict, progress_callback=None) -> VideoGenerationProviderResult:
         return VideoGenerationProviderResult(
             provider_job_id="provider-job-1",
             output_url="https://cdn.example.com/movie.mp4",
@@ -25,13 +25,24 @@ class SuccessProvider:
         )
 
 
+class ProgressingProvider:
+    def generate(self, input_snapshot: dict, progress_callback=None) -> VideoGenerationProviderResult:
+        if progress_callback is not None:
+            progress_callback(45, "provider-job-progress")
+        return VideoGenerationProviderResult(
+            provider_job_id="provider-job-progress",
+            output_url="https://cdn.example.com/movie.mp4",
+            thumbnail_url="https://cdn.example.com/movie.jpg",
+        )
+
+
 class FailingProvider:
-    def generate(self, input_snapshot: dict) -> VideoGenerationProviderResult:
+    def generate(self, input_snapshot: dict, progress_callback=None) -> VideoGenerationProviderResult:
         raise RuntimeError("provider timeout")
 
 
 class ModerationFailingProvider:
-    def generate(self, input_snapshot: dict) -> VideoGenerationProviderResult:
+    def generate(self, input_snapshot: dict, progress_callback=None) -> VideoGenerationProviderResult:
         exc = RuntimeError("moderation_blocked: Your request was blocked by our moderation system.")
         exc.provider_job_id = "video_failed_1"
         raise exc
@@ -42,7 +53,7 @@ class DeletingProvider:
         self.db_session = db_session
         self.job_id = job_id
 
-    def generate(self, input_snapshot: dict) -> VideoGenerationProviderResult:
+    def generate(self, input_snapshot: dict, progress_callback=None) -> VideoGenerationProviderResult:
         self.db_session.execute(
             delete(VideoGenerationJob)
             .where(VideoGenerationJob.id == self.job_id)
@@ -93,6 +104,22 @@ def test_worker_run_marks_job_succeeded(db_session: Session):
     assert result.job.output_url == "https://cdn.example.com/movie.mp4"
     assert result.job.thumbnail_url == "https://cdn.example.com/movie.jpg"
     assert movie.status == MovieStatus.COMPLETED
+
+
+def test_worker_run_records_provider_progress(db_session: Session):
+    user, movie = create_ready_movie(db_session)
+    generation_service = create_service(db_session)
+    created = generation_service.request_generation(movie_id=movie.id, user_id=user.id)
+    worker = VideoGenerationWorkerService(
+        generation_service=generation_service,
+        provider=ProgressingProvider(),
+    )
+
+    result = worker.run(job_id=created.job.id)
+
+    assert result.job.status == VideoGenerationJobStatus.SUCCEEDED
+    assert result.job.progress == 100
+    assert result.job.provider_job_id == "provider-job-progress"
 
 
 def test_worker_run_marks_job_failed_when_provider_fails(db_session: Session):

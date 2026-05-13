@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from collections.abc import Callable
 from hashlib import sha256
 import re
 import tempfile
@@ -25,14 +26,24 @@ class VideoGenerationProviderResult:
 
 
 class VideoGenerationProvider(Protocol):
-    def generate(self, input_snapshot: dict) -> VideoGenerationProviderResult:
+    def generate(
+        self,
+        input_snapshot: dict,
+        progress_callback: Callable[[int, str | None], None] | None = None,
+    ) -> VideoGenerationProviderResult:
         ...
 
 
 class MockVideoGenerationProvider:
-    def generate(self, input_snapshot: dict) -> VideoGenerationProviderResult:
+    def generate(
+        self,
+        input_snapshot: dict,
+        progress_callback: Callable[[int, str | None], None] | None = None,
+    ) -> VideoGenerationProviderResult:
         prompt = str(input_snapshot.get("provider_prompt") or "my-life-movie")
         digest = sha256(prompt.encode("utf-8")).hexdigest()[:16]
+        if progress_callback is not None:
+            progress_callback(100, f"mock_{digest}")
         return VideoGenerationProviderResult(
             provider_job_id=f"mock_{digest}",
             output_url=f"https://cdn.mylifemovie.local/videos/{digest}.mp4",
@@ -61,14 +72,24 @@ class FalVideoGenerationProvider:
         self.max_wait_seconds = max_wait_seconds
         self.client = client or httpx.Client(timeout=60)
 
-    def generate(self, input_snapshot: dict) -> VideoGenerationProviderResult:
+    def generate(
+        self,
+        input_snapshot: dict,
+        progress_callback: Callable[[int, str | None], None] | None = None,
+    ) -> VideoGenerationProviderResult:
         payload = build_fal_payload(input_snapshot)
         submit_data = self._post_json(self._model_url(), payload)
         request_id = require_string(submit_data, "request_id")
+        if progress_callback is not None:
+            progress_callback(5, request_id)
         status_url = submit_data.get("status_url") or self._status_url(request_id)
         response_url = submit_data.get("response_url") or self._response_url(request_id)
 
-        completed_status = self._wait_until_completed(str(status_url))
+        completed_status = self._wait_until_completed(
+            str(status_url),
+            progress_callback=progress_callback,
+            provider_job_id=request_id,
+        )
         if completed_status.get("error"):
             raise VideoGenerationProviderError(str(completed_status["error"]))
 
@@ -81,7 +102,13 @@ class FalVideoGenerationProvider:
             thumbnail_url=thumbnail_url,
         )
 
-    def _wait_until_completed(self, status_url: str) -> dict:
+    def _wait_until_completed(
+        self,
+        status_url: str,
+        *,
+        progress_callback: Callable[[int, str | None], None] | None = None,
+        provider_job_id: str | None = None,
+    ) -> dict:
         deadline = time.monotonic() + self.max_wait_seconds
         last_status: dict | None = None
         while time.monotonic() <= deadline:
@@ -89,7 +116,11 @@ class FalVideoGenerationProvider:
             last_status = status_data
             status = status_data.get("status")
             if status == "COMPLETED":
+                if progress_callback is not None:
+                    progress_callback(95, provider_job_id)
                 return status_data
+            if progress_callback is not None:
+                progress_callback(10 if status == "IN_QUEUE" else 50, provider_job_id)
             if status not in {"IN_QUEUE", "IN_PROGRESS"}:
                 raise VideoGenerationProviderError(f"fal queue 상태를 처리할 수 없습니다: {status}")
             time.sleep(self.poll_interval_seconds)
@@ -152,7 +183,11 @@ class OpenAIVideoGenerationProvider:
         self.thumbnail_prefix = thumbnail_prefix
         self.client = client or OpenAI(api_key=api_key)
 
-    def generate(self, input_snapshot: dict) -> VideoGenerationProviderResult:
+    def generate(
+        self,
+        input_snapshot: dict,
+        progress_callback: Callable[[int, str | None], None] | None = None,
+    ) -> VideoGenerationProviderResult:
         prompt = build_openai_video_prompt(input_snapshot)
         video = self.client.videos.create(
             model=self.model,
@@ -161,7 +196,9 @@ class OpenAIVideoGenerationProvider:
             seconds=self.seconds,
         )
         video_id = require_object_attr(video, "id", "OpenAI 영상 응답에 id 값이 없습니다.")
-        completed_video = self._wait_until_completed(video)
+        if progress_callback is not None:
+            progress_callback(extract_openai_progress(video, default=1), video_id)
+        completed_video = self._wait_until_completed(video, progress_callback=progress_callback)
 
         video_object = self._download_variant(
             video_id=video_id,
@@ -176,22 +213,30 @@ class OpenAIVideoGenerationProvider:
             thumbnail_url=thumbnail_object.url if thumbnail_object is not None else None,
         )
 
-    def _wait_until_completed(self, video: object) -> object:
+    def _wait_until_completed(
+        self,
+        video: object,
+        *,
+        progress_callback: Callable[[int, str | None], None] | None = None,
+    ) -> object:
         deadline = time.monotonic() + self.max_wait_seconds
         current_video = video
         while time.monotonic() <= deadline:
             status = getattr(current_video, "status", None)
+            provider_job_id = getattr(current_video, "id", None)
+            if progress_callback is not None:
+                progress_callback(extract_openai_progress(current_video, default=1), provider_job_id)
             if status == "completed":
                 return current_video
             if status == "failed":
                 raise VideoGenerationProviderError(
                     openai_video_error_message(current_video),
-                    provider_job_id=getattr(current_video, "id", None),
+                    provider_job_id=provider_job_id,
                 )
             if status not in {"queued", "in_progress"}:
                 raise VideoGenerationProviderError(
                     f"OpenAI 영상 생성 상태를 처리할 수 없습니다: {status}",
-                    provider_job_id=getattr(current_video, "id", None),
+                    provider_job_id=provider_job_id,
                 )
 
             time.sleep(self.poll_interval_seconds)
@@ -556,3 +601,12 @@ def openai_video_error_message(video: object) -> str:
         return f"{code}: {message}" if isinstance(code, str) and code else message
 
     return "OpenAI 영상 생성에 실패했습니다."
+
+
+def extract_openai_progress(video: object, *, default: int) -> int:
+    progress = getattr(video, "progress", None)
+    if isinstance(progress, int):
+        return progress
+    if isinstance(progress, float):
+        return int(progress)
+    return default

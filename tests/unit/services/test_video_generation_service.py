@@ -140,6 +140,37 @@ def test_start_generation_marks_job_running(db_session: Session):
     assert job.started_at is not None
 
 
+def test_update_generation_progress_records_running_progress(db_session: Session):
+    user, movie = create_ready_movie(db_session)
+    service = create_service(db_session)
+    created = service.request_generation(movie_id=movie.id, user_id=user.id)
+    service.start_generation(job_id=created.job.id)
+
+    job = service.update_generation_progress(
+        job_id=created.job.id,
+        progress=45,
+        provider_job_id="provider-progress-1",
+    )
+
+    assert job.status == VideoGenerationJobStatus.RUNNING
+    assert job.progress == 45
+    assert job.provider_job_id == "provider-progress-1"
+
+
+def test_update_generation_progress_clamps_to_running_range(db_session: Session):
+    user, movie = create_ready_movie(db_session)
+    service = create_service(db_session)
+    created = service.request_generation(movie_id=movie.id, user_id=user.id)
+    service.start_generation(job_id=created.job.id)
+
+    low = service.update_generation_progress(job_id=created.job.id, progress=0)
+    low_progress = low.progress
+    high = service.update_generation_progress(job_id=created.job.id, progress=100)
+
+    assert low_progress == 1
+    assert high.progress == 99
+
+
 def test_start_generation_rejects_terminal_job(db_session: Session):
     user, movie = create_ready_movie(db_session)
     service = create_service(db_session)

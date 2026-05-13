@@ -32,7 +32,14 @@ class VideoGenerationWorkerService:
             return None
 
         try:
-            provider_result = self.provider.generate(job.input_snapshot)
+            provider_result = self.provider.generate(
+                job.input_snapshot,
+                progress_callback=lambda progress, provider_job_id: self._record_progress(
+                    job_id=job.id,
+                    progress=progress,
+                    provider_job_id=provider_job_id,
+                ),
+            )
         except Exception as exc:
             provider_job_id = getattr(exc, "provider_job_id", None)
             error_message = sanitize_provider_error_message(exc)
@@ -87,6 +94,22 @@ class VideoGenerationWorkerService:
                 "error_type": exc.type,
             },
         )
+
+    def _record_progress(
+        self,
+        *,
+        job_id: int,
+        progress: int,
+        provider_job_id: str | None,
+    ) -> None:
+        try:
+            self.generation_service.update_generation_progress(
+                job_id=job_id,
+                progress=progress,
+                provider_job_id=provider_job_id,
+            )
+        except AppError as exc:
+            self._log_skipped_job(job_id=job_id, exc=exc)
 
 
 def sanitize_provider_error_message(exc: Exception) -> str:

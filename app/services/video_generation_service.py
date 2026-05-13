@@ -77,6 +77,21 @@ class VideoGenerationService:
         job.started_at = now_utc()
         return self._update_job(job)
 
+    def update_generation_progress(
+        self,
+        *,
+        job_id: int,
+        progress: int,
+        provider_job_id: str | None = None,
+    ) -> VideoGenerationJob:
+        job = self._get_job_or_raise(job_id)
+        self._ensure_status(job, allowed=(VideoGenerationJobStatus.RUNNING,))
+
+        job.progress = max(job.progress, clamp_running_progress(progress))
+        if provider_job_id is not None:
+            job.provider_job_id = provider_job_id
+        return self._update_job(job)
+
     def mark_generation_succeeded(
         self,
         *,
@@ -250,3 +265,7 @@ def generation_invalid_status_transition_error(
 
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def clamp_running_progress(progress: int) -> int:
+    return max(1, min(99, progress))
