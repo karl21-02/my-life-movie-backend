@@ -153,3 +153,76 @@ def test_request_id_propagated_in_movie_response(api_client):
 
     assert response.status_code == 200
     assert response.headers.get("X-Request-ID") == "req_movie_id_test"
+
+
+def test_get_similar_movies_returns_200(api_client, db_session: Session, mock_user: AccessTokenClaims):
+    movie = create_completed_movie(db_session, user_id=mock_user.user_id, theme_id=1)
+
+    response = api_client.get(f"/api/movies/{movie.id}/similar")
+
+    assert response.status_code == 200
+
+
+def test_get_similar_movies_response_shape(api_client, db_session: Session, mock_user: AccessTokenClaims):
+    movie = create_completed_movie(db_session, user_id=mock_user.user_id, theme_id=1)
+
+    response = api_client.get(f"/api/movies/{movie.id}/similar")
+
+    body = response.json()
+    assert body["movie_id"] == movie.id
+    assert isinstance(body["similar_movies"], list)
+
+
+def test_get_similar_movies_item_shape(api_client, db_session: Session, mock_user: AccessTokenClaims):
+    movie = create_completed_movie(db_session, user_id=mock_user.user_id, theme_id=1)
+
+    response = api_client.get(f"/api/movies/{movie.id}/similar")
+
+    movies = response.json()["similar_movies"]
+    assert len(movies) > 0
+    first = movies[0]
+    assert "id" in first
+    assert "title" in first
+    assert "thumbnail" in first
+
+
+def test_get_similar_movies_limit(api_client, db_session: Session, mock_user: AccessTokenClaims):
+    movie = create_completed_movie(db_session, user_id=mock_user.user_id, theme_id=1)
+
+    response = api_client.get(f"/api/movies/{movie.id}/similar")
+
+    movies = response.json()["similar_movies"]
+    assert len(movies) <= 4
+
+
+def test_get_similar_movies_genre_based(api_client, db_session: Session, mock_user: AccessTokenClaims):
+    first_movie = create_completed_movie(
+        db_session,
+        user_id=mock_user.user_id,
+        title="하이틴 영화",
+        theme_id=1,
+    )
+    second_movie = create_completed_movie(
+        db_session,
+        user_id=mock_user.user_id,
+        title="사이버펑크 영화",
+        theme_id=2,
+    )
+    res1 = api_client.get(f"/api/movies/{first_movie.id}/similar")
+    res2 = api_client.get(f"/api/movies/{second_movie.id}/similar")
+
+    ids1 = {m["id"] for m in res1.json()["similar_movies"]}
+    ids2 = {m["id"] for m in res2.json()["similar_movies"]}
+    assert ids1.isdisjoint(ids2)
+
+
+def test_get_similar_movies_not_found_returns_problem_detail(api_client):
+    response = api_client.get(
+        "/api/movies/9999/similar",
+        headers={"X-Request-ID": "req_similar_not_found"},
+    )
+
+    assert response.status_code == 404
+    body = response.json()
+    assert body["code"] == "MOVIE_NOT_FOUND"
+    assert body["request_id"] == "req_similar_not_found"
