@@ -156,18 +156,23 @@ def test_get_similar_movies_item_shape():
     assert "thumbnail" in first
 
 
-def test_get_similar_movies_excludes_self():
-    response = create_test_client().get("/api/v1/movies/1/similar")
-
-    ids = [m["id"] for m in response.json()["similar_movies"]]
-    assert 1 not in ids
-
-
 def test_get_similar_movies_limit():
     response = create_test_client().get("/api/v1/movies/1/similar")
 
+    # 장르별 유명 영화 풀이 10편이므로 최대 4편 반환
     movies = response.json()["similar_movies"]
     assert len(movies) <= 4
+
+
+def test_get_similar_movies_genre_based():
+    # movie_id=1(로맨스), movie_id=2(드라마): 추천 결과가 달라야 한다
+    res1 = create_test_client().get("/api/v1/movies/1/similar")
+    res2 = create_test_client().get("/api/v1/movies/2/similar")
+
+    ids1 = {m["id"] for m in res1.json()["similar_movies"]}
+    ids2 = {m["id"] for m in res2.json()["similar_movies"]}
+    # 로맨스(100번대)와 드라마(200번대) 풀은 겹치지 않는다
+    assert ids1.isdisjoint(ids2)
 
 
 def test_get_similar_movies_not_found_returns_problem_detail():

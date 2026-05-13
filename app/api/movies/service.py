@@ -1,5 +1,7 @@
 """영화 데이터 서비스 (현재 in-memory mock, 추후 DB 연동으로 교체)."""
 
+import random
+
 from app.api.movies.schemas import Movie, MovieSummary, OstTrack, SimilarMovie
 from app.core.errors import AppError
 from app.core.logging import get_logger
@@ -68,6 +70,44 @@ _movies: list[Movie] = [
             SimilarMovie(id=2, title="청춘의 기록", thumbnail="https://picsum.photos/seed/movie2/400/600"),
         ],
     ),
+]
+
+# 장르별 유명 영화 풀 (추천 후보 DB, ID는 101부터 시작)
+# TODO: DB 연동 시 실제 테이블로 교체
+_famous_movies: list[dict] = [
+    # ── 로맨스 ──────────────────────────────────────────────────
+    {"id": 101, "title": "노팅 힐", "genre": "로맨스", "thumbnail": "https://picsum.photos/seed/fam101/400/600"},
+    {"id": 102, "title": "비포 선라이즈", "genre": "로맨스", "thumbnail": "https://picsum.photos/seed/fam102/400/600"},
+    {"id": 103, "title": "라라랜드", "genre": "로맨스", "thumbnail": "https://picsum.photos/seed/fam103/400/600"},
+    {"id": 104, "title": "어바웃 타임", "genre": "로맨스", "thumbnail": "https://picsum.photos/seed/fam104/400/600"},
+    {"id": 105, "title": "이터널 선샤인", "genre": "로맨스", "thumbnail": "https://picsum.photos/seed/fam105/400/600"},
+    {"id": 106, "title": "러브 액츄얼리", "genre": "로맨스", "thumbnail": "https://picsum.photos/seed/fam106/400/600"},
+    {"id": 107, "title": "타이타닉", "genre": "로맨스", "thumbnail": "https://picsum.photos/seed/fam107/400/600"},
+    {"id": 108, "title": "500일의 썸머", "genre": "로맨스", "thumbnail": "https://picsum.photos/seed/fam108/400/600"},
+    {"id": 109, "title": "비포 선셋", "genre": "로맨스", "thumbnail": "https://picsum.photos/seed/fam109/400/600"},
+    {"id": 110, "title": "프라이드 앤 프레주디스", "genre": "로맨스", "thumbnail": "https://picsum.photos/seed/fam110/400/600"},
+    # ── 드라마 ──────────────────────────────────────────────────
+    {"id": 201, "title": "쇼생크 탈출", "genre": "드라마", "thumbnail": "https://picsum.photos/seed/fam201/400/600"},
+    {"id": 202, "title": "포레스트 검프", "genre": "드라마", "thumbnail": "https://picsum.photos/seed/fam202/400/600"},
+    {"id": 203, "title": "기생충", "genre": "드라마", "thumbnail": "https://picsum.photos/seed/fam203/400/600"},
+    {"id": 204, "title": "그린 북", "genre": "드라마", "thumbnail": "https://picsum.photos/seed/fam204/400/600"},
+    {"id": 205, "title": "굿 윌 헌팅", "genre": "드라마", "thumbnail": "https://picsum.photos/seed/fam205/400/600"},
+    {"id": 206, "title": "버드맨", "genre": "드라마", "thumbnail": "https://picsum.photos/seed/fam206/400/600"},
+    {"id": 207, "title": "캐치 미 이프 유 캔", "genre": "드라마", "thumbnail": "https://picsum.photos/seed/fam207/400/600"},
+    {"id": 208, "title": "아메리칸 뷰티", "genre": "드라마", "thumbnail": "https://picsum.photos/seed/fam208/400/600"},
+    {"id": 209, "title": "더 파더", "genre": "드라마", "thumbnail": "https://picsum.photos/seed/fam209/400/600"},
+    {"id": 210, "title": "레볼루셔너리 로드", "genre": "드라마", "thumbnail": "https://picsum.photos/seed/fam210/400/600"},
+    # ── 뮤지컬 ──────────────────────────────────────────────────
+    {"id": 301, "title": "레 미제라블", "genre": "뮤지컬", "thumbnail": "https://picsum.photos/seed/fam301/400/600"},
+    {"id": 302, "title": "맘마미아", "genre": "뮤지컬", "thumbnail": "https://picsum.photos/seed/fam302/400/600"},
+    {"id": 303, "title": "그리스", "genre": "뮤지컬", "thumbnail": "https://picsum.photos/seed/fam303/400/600"},
+    {"id": 304, "title": "시카고", "genre": "뮤지컬", "thumbnail": "https://picsum.photos/seed/fam304/400/600"},
+    {"id": 305, "title": "위키드", "genre": "뮤지컬", "thumbnail": "https://picsum.photos/seed/fam305/400/600"},
+    {"id": 306, "title": "물랭 루즈", "genre": "뮤지컬", "thumbnail": "https://picsum.photos/seed/fam306/400/600"},
+    {"id": 307, "title": "위대한 쇼맨", "genre": "뮤지컬", "thumbnail": "https://picsum.photos/seed/fam307/400/600"},
+    {"id": 308, "title": "보헤미안 랩소디", "genre": "뮤지컬", "thumbnail": "https://picsum.photos/seed/fam308/400/600"},
+    {"id": 309, "title": "헤어스프레이", "genre": "뮤지컬", "thumbnail": "https://picsum.photos/seed/fam309/400/600"},
+    {"id": 310, "title": "레ント", "genre": "뮤지컬", "thumbnail": "https://picsum.photos/seed/fam310/400/600"},
 ]
 
 
@@ -143,24 +183,14 @@ def share_movie(movie_id: int, base_url: str) -> tuple[Movie, str]:
 
 
 def get_similar_movies(movie_id: int, limit: int = 4) -> list[SimilarMovie]:
-    """장르 우선, 감정 차선으로 유사 영화를 추천한다. 자기 자신은 제외하고 최대 limit편 반환."""
+    """같은 장르의 유명 영화 풀에서 랜덤으로 최대 limit편을 추천한다."""
     base = get_movie(movie_id)  # 존재하지 않으면 404 raise
 
-    same_genre = [m for m in _movies if m.id != movie_id and m.genre == base.genre]
-    same_sentiment = [
-        m for m in _movies
-        if m.id != movie_id and m.genre != base.genre and m.sentiment == base.sentiment
-    ]
-    others = [
-        m for m in _movies
-        if m.id != movie_id and m.genre != base.genre and m.sentiment != base.sentiment
-    ]
-
-    candidates = same_genre + same_sentiment + others
-    selected = candidates[:limit]
+    candidates = [m for m in _famous_movies if m["genre"] == base.genre]
+    selected = random.sample(candidates, min(limit, len(candidates)))
 
     logger.info(
         "similar_movies_requested",
-        extra={"event": "similar_movies_requested", "movie_id": movie_id, "count": len(selected)},
+        extra={"event": "similar_movies_requested", "movie_id": movie_id, "genre": base.genre, "count": len(selected)},
     )
-    return [SimilarMovie(id=m.id, title=m.title, thumbnail=m.thumbnail) for m in selected]
+    return [SimilarMovie(id=m["id"], title=m["title"], thumbnail=m["thumbnail"]) for m in selected]
