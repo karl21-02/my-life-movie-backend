@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.api.movies import router as movies_router
 from app.models.movie import Movie, MovieStatus
+from app.models.movie_recommendation import MovieRecommendation
 from app.models.video_generation_job import VideoGenerationJob, VideoGenerationJobStatus
 from app.services.access_token_service import AccessTokenClaims
 
@@ -115,6 +116,24 @@ def test_get_movie_returns_detail(api_client, db_session: Session, mock_user: Ac
     assert len(body["similar_movies"]) > 0
     assert body["similar_movies"][0]["title"] == "브렉퍼스트 클럽"
     assert body["similar_movies"][0]["external_url"] is not None
+
+
+def test_get_movie_persists_recommendations(api_client, db_session: Session, mock_user: AccessTokenClaims):
+    movie = create_completed_movie(db_session, user_id=mock_user.user_id)
+
+    first_response = api_client.get(f"/api/movies/{movie.id}")
+    second_response = api_client.get(f"/api/movies/{movie.id}")
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    stored_recommendations = (
+        db_session.query(MovieRecommendation)
+        .filter(MovieRecommendation.movie_id == movie.id)
+        .order_by(MovieRecommendation.rank)
+        .all()
+    )
+    assert len(stored_recommendations) == 4
+    assert stored_recommendations[0].title == "브렉퍼스트 클럽"
 
 
 def test_get_movie_not_found_returns_problem_detail(api_client):
@@ -242,6 +261,7 @@ def test_get_similar_movies_response_shape(api_client, db_session: Session, mock
     body = response.json()
     assert body["movie_id"] == movie.id
     assert isinstance(body["similar_movies"], list)
+    assert db_session.query(MovieRecommendation).filter_by(movie_id=movie.id).count() == len(body["similar_movies"])
 
 
 def test_get_similar_movies_item_shape(api_client, db_session: Session, mock_user: AccessTokenClaims):

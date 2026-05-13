@@ -4,6 +4,8 @@ from typing import Protocol
 import httpx
 
 from app.core.config import Settings
+from app.models.movie_recommendation import MovieRecommendation
+from app.repositories.movie_recommendation_repository import MovieRecommendationRepository
 
 
 @dataclass(frozen=True)
@@ -67,8 +69,10 @@ class MovieRecommendationService:
         self,
         *,
         metadata_provider: MovieMetadataProvider | None = None,
+        recommendation_repository: MovieRecommendationRepository | None = None,
     ) -> None:
         self.metadata_provider = metadata_provider
+        self.recommendation_repository = recommendation_repository
 
     def recommend_by_genre(self, genre: str, *, limit: int = 4) -> list[RecommendedMovie]:
         fallback_movies = fallback_movies_by_genre(genre)[:limit]
@@ -86,6 +90,41 @@ class MovieRecommendationService:
             recommendations.append(recommended_movie or fallback_movie)
         return recommendations
 
+    def get_or_create_for_movie(
+        self,
+        *,
+        movie_id: int,
+        genre: str,
+        limit: int = 4,
+    ) -> list[RecommendedMovie]:
+        if self.recommendation_repository is None:
+            return self.recommend_by_genre(genre, limit=limit)
+
+        stored_recommendations = self.recommendation_repository.list_by_movie_id(movie_id)
+        if stored_recommendations:
+            return [
+                recommended_movie_from_model(recommendation)
+                for recommendation in stored_recommendations[:limit]
+            ]
+
+        recommendations = self.recommend_by_genre(genre, limit=limit)
+        stored_recommendations = self.recommendation_repository.replace_for_movie(
+            movie_id=movie_id,
+            recommendations=[
+                movie_recommendation_model_from_recommended_movie(
+                    movie_id=movie_id,
+                    recommendation=recommendation,
+                    rank=index + 1,
+                    genre=genre,
+                )
+                for index, recommendation in enumerate(recommendations)
+            ],
+        )
+        return [
+            recommended_movie_from_model(recommendation)
+            for recommendation in stored_recommendations[:limit]
+        ]
+
 
 def build_movie_recommendation_service(settings: Settings) -> MovieRecommendationService:
     provider = None
@@ -99,6 +138,38 @@ def build_movie_recommendation_service(settings: Settings) -> MovieRecommendatio
             timeout_seconds=settings.tmdb_timeout_seconds,
         )
     return MovieRecommendationService(metadata_provider=provider)
+
+
+def recommended_movie_from_model(model: MovieRecommendation) -> RecommendedMovie:
+    provider_movie_id = model.provider_movie_id
+    parsed_id = int(provider_movie_id) if provider_movie_id and provider_movie_id.isdigit() else model.id
+    return RecommendedMovie(
+        id=parsed_id,
+        title=model.title,
+        thumbnail=model.poster_url,
+        external_url=model.external_url,
+        provider=model.provider,
+    )
+
+
+def movie_recommendation_model_from_recommended_movie(
+    *,
+    movie_id: int,
+    recommendation: RecommendedMovie,
+    rank: int,
+    genre: str,
+) -> MovieRecommendation:
+    return MovieRecommendation(
+        movie_id=movie_id,
+        provider=recommendation.provider,
+        provider_movie_id=str(recommendation.id),
+        title=recommendation.title,
+        poster_url=recommendation.thumbnail,
+        external_url=recommendation.external_url,
+        rank=rank,
+        reason=f"{genre} 테마 기반 추천",
+        metadata_json={"source": recommendation.provider},
+    )
 
 
 def build_tmdb_recommendation(data: dict, image_base_url: str, poster_size: str) -> RecommendedMovie | None:

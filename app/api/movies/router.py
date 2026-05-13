@@ -14,6 +14,7 @@ from app.db.session import get_db_session
 from app.models.movie import Movie
 from app.models.video_generation_job import VideoGenerationJob, VideoGenerationJobStatus
 from app.repositories.movie_repository import SQLAlchemyMovieRepository
+from app.repositories.movie_recommendation_repository import SQLAlchemyMovieRecommendationRepository
 from app.repositories.video_generation_job_repository import SQLAlchemyVideoGenerationJobRepository
 from app.schemas.movie import (
     CreateDraftRequest,
@@ -295,8 +296,13 @@ async def get_movie(
     """현재 사용자의 특정 영화 상세 정보를 반환합니다."""
     movie_repo = SQLAlchemyMovieRepository(db)
     job_repo = SQLAlchemyVideoGenerationJobRepository(db)
+    recommendation_repo = SQLAlchemyMovieRecommendationRepository(db)
     movie = _get_movie_or_403(movie_repo, movie_id, current_user.user_id)
-    return build_movie_detail(movie, job_repo.get_latest_by_movie_id(movie.id))
+    return build_movie_detail(
+        movie,
+        job_repo.get_latest_by_movie_id(movie.id),
+        recommendation_repo,
+    )
 
 
 @router.delete("/{movie_id}", response_model=schemas.DeleteMovieResponse)
@@ -389,11 +395,16 @@ async def get_similar_movies(
 ) -> schemas.SimilarMoviesResponse:
     """현재 사용자 영화의 테마 기반으로 유사한 유명 영화 최대 4편을 추천합니다."""
     movie_repo = SQLAlchemyMovieRepository(db)
+    recommendation_repo = SQLAlchemyMovieRecommendationRepository(db)
     movie = _get_movie_or_403(movie_repo, movie_id, current_user.user_id)
     genre = THEME_NAMES.get(movie.theme_id, "인생 영화")
     return schemas.SimilarMoviesResponse(
         movie_id=movie.id,
-        similar_movies=build_similar_movies(genre),
+        similar_movies=build_similar_movies(
+            movie_id=movie.id,
+            genre=genre,
+            recommendation_repo=recommendation_repo,
+        ),
     )
 
 
@@ -513,6 +524,7 @@ def build_download_filename(title: str, extension: str) -> str:
 def build_movie_detail(
     movie: Movie,
     latest_job: VideoGenerationJob | None,
+    recommendation_repo: SQLAlchemyMovieRecommendationRepository | None = None,
 ) -> schemas.Movie:
     summary = build_movie_summary(movie, latest_job)
     return schemas.Movie(
@@ -526,7 +538,11 @@ def build_movie_detail(
         output_url=summary.output_url,
         thumbnail_url=summary.thumbnail_url,
         ost=build_movie_ost(movie),
-        similar_movies=build_similar_movies(summary.genre),
+        similar_movies=build_similar_movies(
+            movie_id=movie.id,
+            genre=summary.genre,
+            recommendation_repo=recommendation_repo,
+        ),
     )
 
 
@@ -573,7 +589,14 @@ def build_movie_ost(movie: Movie) -> list[schemas.OstTrack]:
     ]
 
 
-def build_similar_movies(genre: str) -> list[schemas.SimilarMovie]:
+def build_similar_movies(
+    *,
+    movie_id: int,
+    genre: str,
+    recommendation_repo: SQLAlchemyMovieRecommendationRepository | None = None,
+) -> list[schemas.SimilarMovie]:
+    service = build_movie_recommendation_service(get_settings())
+    service.recommendation_repository = recommendation_repo
     return [
         schemas.SimilarMovie(
             id=movie.id,
@@ -582,5 +605,5 @@ def build_similar_movies(genre: str) -> list[schemas.SimilarMovie]:
             external_url=movie.external_url,
             provider=movie.provider,
         )
-        for movie in build_movie_recommendation_service(get_settings()).recommend_by_genre(genre)
+        for movie in service.get_or_create_for_movie(movie_id=movie_id, genre=genre)
     ]
