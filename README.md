@@ -38,7 +38,7 @@
 AI 역질문을 통해 사용자의 인생 이야기를 `story_brief`, `scene_plan`, `generation_prompt`로 정리.
 
 ### 🎬 영상 생성 준비 파이프라인
-생성 Job, 상태 조회, 표준 `VideoGenerationInput`, 멀티 분석 에이전트 확장 구조를 기반으로 실제 영상 생성 연동을 준비.
+생성 Job, 상태 조회, 표준 `VideoGenerationInput`, DB 큐 worker, fal.ai provider 연동을 기반으로 실제 영상 생성까지 처리.
 
 ---
 
@@ -52,7 +52,7 @@ AI 역질문을 통해 사용자의 인생 이야기를 `story_brief`, `scene_pl
 - 다양한 형식(JPG, PNG, MP4, MOV, PDF, TXT 등)의 입력 수집 기반 구현.
 - FastAPI 기반 인증, 영화 생성 입력, Job 상태 관리 API 구현.
 - OpenAI 기반 스토리 구조화와 영상 생성용 프롬프트 정규화.
-- 유저 스토리와 첨부 자산을 영상 생성용 입력으로 정규화하는 Job/상태 관리 기반 구축.
+- 유저 스토리와 첨부 자산을 영상 생성용 입력으로 정규화하는 Job/상태 관리 및 worker 기반 구축.
 
 ### Out-of-Scope
 - 사용자 트래픽 대응을 위한 인프라 확장성 테스트.
@@ -64,7 +64,7 @@ AI 역질문을 통해 사용자의 인생 이야기를 `story_brief`, `scene_pl
 | Category | Technologies |
 |----------|-------------|
 | **Backend** | Python FastAPI |
-| **AI** | OpenAI 기반 스토리 구조화, 영상 생성 입력 정규화 |
+| **AI** | OpenAI 기반 스토리 구조화, fal.ai 기반 영상 생성, 영상 생성 입력 정규화 |
 | **API** | FastAPI, OpenAI, Spotify 추천 API |
 
 ---
@@ -103,6 +103,31 @@ docker compose up --build
 | Backend Health Check | http://localhost:8000/health |
 | MySQL | localhost:3307 |
 | Redis | localhost:6379 |
+
+### 영상 생성 provider
+
+로컬 기본값은 `VIDEO_GENERATION_PROVIDER=auto`입니다. `FAL_KEY`가 비어 있으면 mock provider로 동작하고, `FAL_KEY`를 넣으면 fal.ai queue API로 실제 영상을 생성합니다.
+
+```env
+VIDEO_GENERATION_PROVIDER=auto
+FAL_KEY=your-fal-api-key
+FAL_MODEL_ID=fal-ai/wan-alpha
+FAL_POLL_INTERVAL_SECONDS=5
+FAL_MAX_WAIT_SECONDS=900
+```
+
+worker는 Docker Compose에서 `my-life-movie-video-worker` 서비스로 실행됩니다. 수동 실행이 필요하면 다음 명령을 사용합니다.
+
+```bash
+uv run python -m app.workers.video_generation_worker
+```
+
+영상 생성 확인 흐름:
+
+1. `POST /api/movies/draft`
+2. `POST /api/movies/{movie_id}/chat`
+3. `POST /api/movies/{movie_id}/generate`
+4. `GET /api/movies/{movie_id}/generation`
 
 ### DB 마이그레이션
 

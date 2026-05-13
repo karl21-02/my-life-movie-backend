@@ -686,7 +686,7 @@ GET /api/movies/{movie_id}/generation
 영화 상태 반영:
 
 - Job 생성 시 `movies.status = GENERATING`
-- 완료/실패 반영은 같은 이슈의 worker/provider 단계에서 처리한다.
+- worker 처리 완료 시 `COMPLETED`, 실패 시 `FAILED`, 취소 시 `DRAFT`로 반영한다.
 
 ## 단계별 범위
 
@@ -698,8 +698,8 @@ GET /api/movies/{movie_id}/generation
 | 2단계 | 파일 저장소/S3 기반 원본 파일 URL, metadata 저장 |
 | 3단계 | Image/Video/Document/Music analyzer v1 |
 | 4단계 | Synthesizer, PromptRefiner, SafetyReviewer |
-| 5단계 | Redis queue, worker, mock provider 처리 |
-| 6단계 | 실제 영상 provider 연동 |
+| 5단계 | DB 큐, worker, mock provider 처리 |
+| 6단계 | fal.ai 실제 영상 provider 연동 |
 | 7단계 | S3 결과 저장, output_url/thumbnail_url 반영 |
 
 프론트 생성 진행 화면은 백엔드 Job/status API가 안정화된 뒤 프론트 이슈에서 별도로 진행한다.
@@ -719,6 +719,9 @@ GET /api/movies/{movie_id}/generation
 - 생성 요청 시 `input_snapshot`에 표준화된 `story`, `style`, `audio_direction`, `assets`, `scenes`, `provider_prompt`가 저장된다.
 - 같은 영화에 진행 중 Job이 있으면 `409`를 반환한다.
 - `GET /api/movies/{movie_id}/generation`이 최신 Job 상태를 반환한다.
+- `POST /api/movies/{movie_id}/generation/cancel`이 진행 중 Job을 `CANCELED`로 변경한다.
+- worker가 가장 오래된 `QUEUED` Job을 처리한다.
+- `FAL_KEY`가 있으면 fal.ai provider를 사용하고, 없으면 mock provider를 사용한다.
 - 없는 영화는 `404`를 반환한다.
 - 권한 없는 영화는 `403`을 반환한다.
 - 기존 `draft/music/input/summary` 테스트가 깨지지 않는다.
@@ -763,13 +766,15 @@ git diff --check
    - SafetyReviewer
 
 8. `feat(worker): 영상 생성 worker와 mock provider 추가`
-   - Redis queue
+   - DB 큐
    - Job 실행/완료/실패 상태 전이
    - mock output_url/thumbnail_url 반영
 
 9. `feat(ai): 실제 영상 provider 연동`
-   - provider 선택 후 adapter 구현
-   - 결과 영상 저장과 상태 반영
+   - fal.ai queue API adapter 구현
+   - provider 선택은 `VIDEO_GENERATION_PROVIDER=auto|mock|fal`
+   - `FAL_KEY`가 있으면 실제 provider, 없으면 mock provider 사용
+   - provider 결과 URL을 Job의 `output_url`, `thumbnail_url`에 반영
 
 ## 별도 프론트 작업
 
