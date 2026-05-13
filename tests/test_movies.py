@@ -61,6 +61,22 @@ def test_get_movies_returns_current_user_movies(api_client, db_session: Session,
     assert body[0]["thumbnail_url"] == "/generated/thumbnails/video_123.webp"
 
 
+def test_get_movies_returns_empty_without_current_user_movies(api_client):
+    response = api_client.get("/api/movies")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_get_movies_does_not_return_legacy_mock_data(api_client):
+    response = api_client.get("/api/movies")
+
+    titles = {movie["title"] for movie in response.json()}
+    assert "나의 로맨틱 코드 여정" not in titles
+    assert "청춘의 기록" not in titles
+    assert "소울 사운드트랙" not in titles
+
+
 def test_get_movies_summary_shape(api_client, db_session: Session, mock_user: AccessTokenClaims):
     create_completed_movie(db_session, user_id=mock_user.user_id)
 
