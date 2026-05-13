@@ -7,6 +7,13 @@ from app.api.movies import schemas
 from app.core.config import get_settings
 from app.core.deps import get_current_user
 from app.core.errors import AppError
+from app.core.openapi import (
+    AUTH_REQUIRED_RESPONSE,
+    COMMON_PROBLEM_RESPONSES,
+    FORBIDDEN_RESPONSE,
+    INVALID_FILE_TYPE_RESPONSE,
+    MOVIE_NOT_FOUND_RESPONSE,
+)
 from app.db.session import get_db_session
 from app.models.movie import Movie
 from app.models.video_generation_job import VideoGenerationJob
@@ -28,9 +35,8 @@ from app.services.story_generation_service import generate_story_inputs
 from app.services.video_generation_provider import resolve_video_generation_provider_name
 from app.services.video_generation_service import VideoGenerationService
 
-router = APIRouter(prefix="/api/movies", tags=["movies"])
+router = APIRouter(prefix="/api/movies", tags=["영화"])
 
-# 파일 업로드 시 허용되는 확장자 목록 (소문자 기준)
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf", ".txt", ".mp4", ".mov"}
 THEME_NAMES = {
     1: "하이틴",
@@ -79,7 +85,14 @@ FAMOUS_MOVIES_BY_GENRE = {
     ],
 }
 
-# 영화 조회 시 존재 여부와 소유자 권한을 확인하는 헬퍼 함수
+_AUTH_MOVIE_RESPONSES = {
+    401: AUTH_REQUIRED_RESPONSE,
+    403: FORBIDDEN_RESPONSE,
+    404: MOVIE_NOT_FOUND_RESPONSE,
+    **COMMON_PROBLEM_RESPONSES,
+}
+
+
 def _get_movie_or_403(repo: SQLAlchemyMovieRepository, movie_id: int, user_id: int):
     movie = repo.get_by_id(movie_id)
     if movie is None:
@@ -101,7 +114,21 @@ def _get_movie_or_403(repo: SQLAlchemyMovieRepository, movie_id: int, user_id: i
     return movie
 
 
-@router.post("/draft", response_model=CreateDraftResponse)
+@router.post(
+    "/draft",
+    response_model=CreateDraftResponse,
+    summary="영화 초안 생성",
+    description=(
+        "`theme_id`로 테마를 선택해 영화 초안을 생성합니다. "
+        "응답의 `movie_id`는 이후 음악 선택·파일 업로드·AI 채팅·요약·생성 시작 등 "
+        "모든 영화 제작 요청에 사용됩니다. Bearer access token이 필요합니다."
+    ),
+    responses={
+        200: {"description": "영화 초안 생성 성공입니다."},
+        401: AUTH_REQUIRED_RESPONSE,
+        **COMMON_PROBLEM_RESPONSES,
+    },
+)
 async def create_draft(
     request: CreateDraftRequest,
     db: Session = Depends(get_db_session),
@@ -113,7 +140,19 @@ async def create_draft(
     return CreateDraftResponse(movie_id=movie.id, status=movie.status.value)
 
 
-@router.put("/{movie_id}/music")
+@router.put(
+    "/{movie_id}/music",
+    summary="음악 선택 저장",
+    description=(
+        "사용자가 선택한 `music_id`를 영화에 저장합니다. "
+        "이후 `/summary` 조회 시 선택된 음악 정보가 포함됩니다. "
+        "Bearer access token이 필요하며, 본인 영화에만 접근할 수 있습니다."
+    ),
+    responses={
+        200: {"description": "음악 선택 저장 성공입니다."},
+        **_AUTH_MOVIE_RESPONSES,
+    },
+)
 async def update_music(
     movie_id: int,
     request: UpdateMusicRequest,
@@ -128,7 +167,22 @@ async def update_music(
     return {"movie_id": movie.id, "music_id": movie.music_id}
 
 
-@router.post("/{movie_id}/files", response_model=FileUploadResponse)
+@router.post(
+    "/{movie_id}/files",
+    response_model=FileUploadResponse,
+    summary="파일 업로드",
+    description=(
+        "영화 제작에 사용할 파일(사진·영상·문서)을 업로드합니다. "
+        "허용 확장자는 `jpg`, `jpeg`, `png`, `pdf`, `txt`, `mp4`, `mov`이며 "
+        "그 외 확장자는 400 오류를 반환합니다. "
+        "업로드된 파일은 `file_id`, `filename`, `type`, `extracted_text`로 응답됩니다."
+    ),
+    responses={
+        200: {"description": "파일 업로드 성공입니다."},
+        400: INVALID_FILE_TYPE_RESPONSE,
+        **_AUTH_MOVIE_RESPONSES,
+    },
+)
 async def upload_file(
     movie_id: int,
     file: UploadFile = File(...),
@@ -161,7 +215,21 @@ async def upload_file(
     return FileUploadResponse(**file_info)
 
 
-@router.post("/{movie_id}/chat", response_model=ChatResponse)
+@router.post(
+    "/{movie_id}/chat",
+    response_model=ChatResponse,
+    summary="AI 채팅 (시나리오 수집)",
+    description=(
+        "사용자 `message`를 받아 OpenAI GPT로 AI 역질문(`ai_question`)과 "
+        "현재 시나리오 초안(`current_draft`)을 반환합니다. "
+        "채팅이 누적될수록 `story_brief`·`scene_plan`이 구체화되며 "
+        "최종 `generation_prompt`가 완성됩니다."
+    ),
+    responses={
+        200: {"description": "AI 채팅 응답 성공입니다."},
+        **_AUTH_MOVIE_RESPONSES,
+    },
+)
 async def chat_prompt(
     movie_id: int,
     request: ChatRequest,
@@ -197,7 +265,18 @@ async def chat_prompt(
     )
 
 
-@router.get("/{movie_id}/chat")
+@router.get(
+    "/{movie_id}/chat",
+    summary="AI 채팅 히스토리 조회",
+    description=(
+        "지금까지 진행된 AI 채팅 히스토리를 `history` 배열로 반환합니다. "
+        "각 항목은 `role`(`user` 또는 `ai`)과 `message`로 구성됩니다."
+    ),
+    responses={
+        200: {"description": "채팅 히스토리 반환 성공입니다."},
+        **_AUTH_MOVIE_RESPONSES,
+    },
+)
 async def get_chat_history(
     movie_id: int,
     db: Session = Depends(get_db_session),
@@ -209,7 +288,20 @@ async def get_chat_history(
     return {"history": movie.chat_history or []}
 
 
-@router.get("/{movie_id}/summary", response_model=SummaryResponse)
+@router.get(
+    "/{movie_id}/summary",
+    response_model=SummaryResponse,
+    summary="최종 입력 요약 조회",
+    description=(
+        "피드백 페이지에서 사용자에게 보여줄 최종 입력 요약을 반환합니다. "
+        "응답에는 AI 채팅으로 완성된 `prompt`, 업로드한 `files`, 선택한 `theme`·`music`, "
+        "그리고 영상 생성에 필요한 `story_brief`·`scene_plan`·`generation_prompt`가 포함됩니다."
+    ),
+    responses={
+        200: {"description": "최종 입력 요약 반환 성공입니다."},
+        **_AUTH_MOVIE_RESPONSES,
+    },
+)
 async def get_summary(
     movie_id: int,
     db: Session = Depends(get_db_session),
@@ -238,7 +330,21 @@ def _get_video_generation_service(db: Session) -> VideoGenerationService:
     )
 
 
-@router.get("/{movie_id}/generation", response_model=GenerationStatusResponse)
+@router.get(
+    "/{movie_id}/generation",
+    response_model=GenerationStatusResponse,
+    summary="영상 생성 상태 조회",
+    description=(
+        "가장 최신 영상 생성 Job의 상태를 조회합니다. "
+        "`status`는 `QUEUED`·`PROCESSING`·`SUCCEEDED`·`FAILED`·`CANCELLED` 중 하나이며, "
+        "`progress`(0~100), `output_url`, `thumbnail_url`이 함께 반환됩니다. "
+        "생성 완료 시 `output_url`로 영상에 접근할 수 있습니다."
+    ),
+    responses={
+        200: {"description": "영상 생성 상태 반환 성공입니다."},
+        **_AUTH_MOVIE_RESPONSES,
+    },
+)
 async def get_generation_status(
     movie_id: int,
     db: Session = Depends(get_db_session),
@@ -261,7 +367,20 @@ async def get_generation_status(
     )
 
 
-@router.post("/{movie_id}/generate", response_model=GenerationRequestResponse)
+@router.post(
+    "/{movie_id}/generate",
+    response_model=GenerationRequestResponse,
+    summary="영상 생성 시작",
+    description=(
+        "영화의 `generation_prompt`와 수집된 입력을 바탕으로 영상 생성 Job을 생성합니다. "
+        "Job은 `QUEUED` 상태로 즉시 반환되며, 실제 생성은 백그라운드에서 진행됩니다. "
+        "생성 상태는 `GET /{movie_id}/generation`으로 폴링해서 확인하세요."
+    ),
+    responses={
+        200: {"description": "영상 생성 요청 접수 성공입니다."},
+        **_AUTH_MOVIE_RESPONSES,
+    },
+)
 async def generate_movie(
     movie_id: int,
     db: Session = Depends(get_db_session),
@@ -281,7 +400,19 @@ async def generate_movie(
     )
 
 
-@router.post("/{movie_id}/generation/cancel", response_model=GenerationStatusResponse)
+@router.post(
+    "/{movie_id}/generation/cancel",
+    response_model=GenerationStatusResponse,
+    summary="영상 생성 취소",
+    description=(
+        "`QUEUED` 또는 `PROCESSING` 상태의 영상 생성 Job을 취소합니다. "
+        "취소된 Job은 `CANCELLED` 상태가 되며, 이후 `POST /{movie_id}/generate`로 재시작할 수 있습니다."
+    ),
+    responses={
+        200: {"description": "영상 생성 취소 성공입니다."},
+        **_AUTH_MOVIE_RESPONSES,
+    },
+)
 async def cancel_generation(
     movie_id: int,
     db: Session = Depends(get_db_session),
@@ -304,7 +435,21 @@ async def cancel_generation(
     )
 
 
-@router.get("", response_model=list[schemas.MovieSummary])
+@router.get(
+    "",
+    response_model=list[schemas.MovieSummary],
+    summary="내 영화 목록 조회",
+    description=(
+        "Bearer access token으로 인증된 사용자의 영화 목록을 반환합니다. "
+        "각 항목에는 `id`, `title`, `genre`, `status`, `thumbnail_url`, `output_url`이 포함됩니다. "
+        "다른 사용자의 영화는 조회되지 않습니다."
+    ),
+    responses={
+        200: {"description": "영화 목록 반환 성공입니다."},
+        401: AUTH_REQUIRED_RESPONSE,
+        **COMMON_PROBLEM_RESPONSES,
+    },
+)
 async def get_movies(
     db: Session = Depends(get_db_session),
     current_user: AccessTokenClaims = Depends(get_current_user),
@@ -320,7 +465,21 @@ async def get_movies(
     ]
 
 
-@router.get("/{movie_id}", response_model=schemas.Movie)
+@router.get(
+    "/{movie_id}",
+    response_model=schemas.Movie,
+    summary="영화 상세 조회",
+    description=(
+        "특정 영화의 상세 정보를 반환합니다. "
+        "응답에는 `title`, `description`, `genre`, `sentiment`, `status`, "
+        "`output_url`, `thumbnail_url`, `ost`, `similar_movies`가 포함됩니다. "
+        "본인 영화가 아니면 403을 반환합니다."
+    ),
+    responses={
+        200: {"description": "영화 상세 반환 성공입니다."},
+        **_AUTH_MOVIE_RESPONSES,
+    },
+)
 async def get_movie(
     movie_id: int,
     db: Session = Depends(get_db_session),
@@ -333,7 +492,19 @@ async def get_movie(
     return build_movie_detail(movie, job_repo.get_latest_by_movie_id(movie.id))
 
 
-@router.delete("/{movie_id}", response_model=schemas.DeleteMovieResponse)
+@router.delete(
+    "/{movie_id}",
+    response_model=schemas.DeleteMovieResponse,
+    summary="영화 삭제",
+    description=(
+        "특정 영화와 연관된 모든 데이터를 삭제합니다. "
+        "삭제는 복구가 불가능하며, 본인 영화가 아니면 403을 반환합니다."
+    ),
+    responses={
+        200: {"description": "영화 삭제 성공입니다."},
+        **_AUTH_MOVIE_RESPONSES,
+    },
+)
 async def delete_movie(
     movie_id: int,
     db: Session = Depends(get_db_session),
@@ -346,7 +517,20 @@ async def delete_movie(
     return schemas.DeleteMovieResponse(message="영화가 삭제되었습니다.")
 
 
-@router.get("/{movie_id}/download", response_model=schemas.DownloadMovieResponse)
+@router.get(
+    "/{movie_id}/download",
+    response_model=schemas.DownloadMovieResponse,
+    summary="영화 다운로드 정보 조회",
+    description=(
+        "영상 생성이 완료된 영화의 다운로드 정보를 반환합니다. "
+        "`output_url`로 생성된 영상 파일에 직접 접근할 수 있습니다. "
+        "아직 생성이 완료되지 않은 경우 `output_url`은 `null`로 반환됩니다."
+    ),
+    responses={
+        200: {"description": "다운로드 정보 반환 성공입니다."},
+        **_AUTH_MOVIE_RESPONSES,
+    },
+)
 async def download_movie(
     movie_id: int,
     db: Session = Depends(get_db_session),
@@ -366,7 +550,20 @@ async def download_movie(
     )
 
 
-@router.post("/{movie_id}/share", response_model=schemas.ShareMovieResponse)
+@router.post(
+    "/{movie_id}/share",
+    response_model=schemas.ShareMovieResponse,
+    summary="영화 공유 URL 생성",
+    description=(
+        "영화의 공유 URL을 생성해 반환합니다. "
+        "`share_url`은 `{base_url}/movies/{movie_id}` 형태이며, "
+        "해당 URL을 통해 영화 결과 페이지에 접근할 수 있습니다."
+    ),
+    responses={
+        200: {"description": "공유 URL 생성 성공입니다."},
+        **_AUTH_MOVIE_RESPONSES,
+    },
+)
 async def share_movie(
     movie_id: int,
     request: Request,
@@ -387,7 +584,20 @@ async def share_movie(
     )
 
 
-@router.get("/{movie_id}/similar", response_model=schemas.SimilarMoviesResponse)
+@router.get(
+    "/{movie_id}/similar",
+    response_model=schemas.SimilarMoviesResponse,
+    summary="유사 영화 추천",
+    description=(
+        "영화의 테마(장르)를 기반으로 유사한 유명 영화 최대 4편을 추천합니다. "
+        "결과물 페이지에서 '이런 영화는 어때요?' 섹션에 활용됩니다. "
+        "각 항목은 `id`, `title`, `thumbnail`로 구성됩니다."
+    ),
+    responses={
+        200: {"description": "유사 영화 추천 성공입니다."},
+        **_AUTH_MOVIE_RESPONSES,
+    },
+)
 async def get_similar_movies(
     movie_id: int,
     db: Session = Depends(get_db_session),
