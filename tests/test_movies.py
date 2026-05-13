@@ -1,6 +1,11 @@
+from pathlib import Path
+
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings
+from app.api.movies import router as movies_router
 from app.models.movie import Movie, MovieStatus
+from app.models.movie_recommendation import MovieRecommendation
 from app.models.video_generation_job import VideoGenerationJob, VideoGenerationJobStatus
 from app.services.access_token_service import AccessTokenClaims
 
@@ -108,7 +113,40 @@ def test_get_movie_returns_detail(api_client, db_session: Session, mock_user: Ac
     assert body["status"] == "COMPLETED"
     assert body["output_url"] == "/generated/videos/video_123.mp4"
     assert isinstance(body["ost"], list)
-    assert isinstance(body["similar_movies"], list)
+    assert body["similar_movies"] == []
+
+
+def test_get_movie_persists_recommendations(api_client, db_session: Session, mock_user: AccessTokenClaims):
+    movie = create_completed_movie(db_session, user_id=mock_user.user_id)
+    db_session.add(
+        MovieRecommendation(
+            movie_id=movie.id,
+            provider="tmdb",
+            provider_movie_id="2108",
+            title="저장된 추천",
+            poster_url="https://image.tmdb.org/t/p/w500/poster.jpg",
+            external_url="https://www.themoviedb.org/movie/2108",
+            rank=1,
+            reason="성장 서사가 유사합니다.",
+            metadata_json={"score": 5.0},
+        )
+    )
+    db_session.commit()
+
+    first_response = api_client.get(f"/api/movies/{movie.id}")
+    second_response = api_client.get(f"/api/movies/{movie.id}")
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    stored_recommendations = (
+        db_session.query(MovieRecommendation)
+        .filter(MovieRecommendation.movie_id == movie.id)
+        .order_by(MovieRecommendation.rank)
+        .all()
+    )
+    assert len(stored_recommendations) == 1
+    assert stored_recommendations[0].title == "저장된 추천"
+    assert first_response.json()["similar_movies"][0]["title"] == "저장된 추천"
 
 
 def test_get_movie_not_found_returns_problem_detail(api_client):
@@ -149,7 +187,56 @@ def test_download_movie_returns_info(api_client, db_session: Session, mock_user:
     assert body["movie_id"] == movie.id
     assert body["title"] == "나의 실제 생성 영화"
     assert body["output_url"] == "/generated/videos/video_123.mp4"
+    assert body["download_url"] == f"/api/movies/{movie.id}/download/file"
     assert "message" in body
+
+
+def test_download_movie_file_returns_attachment(api_client, db_session: Session, mock_user: AccessTokenClaims):
+    movie = create_completed_movie(db_session, user_id=mock_user.user_id)
+    file_path = Path("generated/videos/video_123.mp4")
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_bytes(b"movie-content")
+
+    try:
+        response = api_client.get(f"/api/movies/{movie.id}/download/file")
+    finally:
+        file_path.unlink(missing_ok=True)
+
+    assert response.status_code == 200
+    assert response.content == b"movie-content"
+    assert response.headers["content-type"].startswith("video/mp4")
+    assert "attachment" in response.headers["content-disposition"]
+
+
+def test_download_movie_returns_s3_presigned_url(monkeypatch):
+    class FakeStorage:
+        def create_presigned_download(self, key: str, *, expires_seconds: int = 900):
+            assert key == "generated/videos/video_123.mp4"
+            assert expires_seconds == 600
+            return type(
+                "Download",
+                (),
+                {"url": "https://s3-presigned.test/video_123.mp4", "key": key, "method": "GET"},
+            )()
+
+    monkeypatch.setattr(
+        movies_router,
+        "get_settings",
+        lambda: Settings(
+            storage_provider="s3",
+            s3_public_base_url="https://cdn.example.com",
+            s3_presigned_url_expire_seconds=600,
+            s3_bucket_name="movie-bucket",
+        ),
+    )
+    monkeypatch.setattr(movies_router, "build_storage_service", lambda settings: FakeStorage())
+
+    download_url = movies_router.build_movie_download_url(
+        1,
+        "https://cdn.example.com/generated/videos/video_123.mp4",
+    )
+
+    assert download_url == "https://s3-presigned.test/video_123.mp4"
 
 
 def test_download_movie_not_found_returns_problem_detail(api_client):
@@ -187,10 +274,23 @@ def test_get_similar_movies_response_shape(api_client, db_session: Session, mock
     body = response.json()
     assert body["movie_id"] == movie.id
     assert isinstance(body["similar_movies"], list)
+    assert db_session.query(MovieRecommendation).filter_by(movie_id=movie.id).count() == len(body["similar_movies"])
 
 
-def test_get_similar_movies_item_shape(api_client, db_session: Session, mock_user: AccessTokenClaims):
+def test_get_similar_movies_item_shape_with_stored_recommendation(api_client, db_session: Session, mock_user: AccessTokenClaims):
     movie = create_completed_movie(db_session, user_id=mock_user.user_id, theme_id=1)
+    db_session.add(
+        MovieRecommendation(
+            movie_id=movie.id,
+            provider="tmdb",
+            provider_movie_id="2108",
+            title="저장된 추천",
+            poster_url="https://image.tmdb.org/t/p/w500/poster.jpg",
+            external_url="https://www.themoviedb.org/movie/2108",
+            rank=1,
+        )
+    )
+    db_session.commit()
 
     response = api_client.get(f"/api/movies/{movie.id}/similar")
 
@@ -200,6 +300,8 @@ def test_get_similar_movies_item_shape(api_client, db_session: Session, mock_use
     assert "id" in first
     assert "title" in first
     assert "thumbnail" in first
+    assert "external_url" in first
+    assert "provider" in first
 
 
 def test_get_similar_movies_limit(api_client, db_session: Session, mock_user: AccessTokenClaims):
@@ -209,27 +311,6 @@ def test_get_similar_movies_limit(api_client, db_session: Session, mock_user: Ac
 
     movies = response.json()["similar_movies"]
     assert len(movies) <= 4
-
-
-def test_get_similar_movies_genre_based(api_client, db_session: Session, mock_user: AccessTokenClaims):
-    first_movie = create_completed_movie(
-        db_session,
-        user_id=mock_user.user_id,
-        title="하이틴 영화",
-        theme_id=1,
-    )
-    second_movie = create_completed_movie(
-        db_session,
-        user_id=mock_user.user_id,
-        title="사이버펑크 영화",
-        theme_id=2,
-    )
-    res1 = api_client.get(f"/api/movies/{first_movie.id}/similar")
-    res2 = api_client.get(f"/api/movies/{second_movie.id}/similar")
-
-    ids1 = {m["id"] for m in res1.json()["similar_movies"]}
-    ids2 = {m["id"] for m in res2.json()["similar_movies"]}
-    assert ids1.isdisjoint(ids2)
 
 
 def test_get_similar_movies_not_found_returns_problem_detail(api_client):

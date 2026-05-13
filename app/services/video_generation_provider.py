@@ -1,9 +1,10 @@
 from dataclasses import dataclass
+from collections.abc import Callable
 from hashlib import sha256
 import re
 import tempfile
 import time
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 from openai import OpenAI
@@ -25,14 +26,24 @@ class VideoGenerationProviderResult:
 
 
 class VideoGenerationProvider(Protocol):
-    def generate(self, input_snapshot: dict) -> VideoGenerationProviderResult:
+    def generate(
+        self,
+        input_snapshot: dict,
+        progress_callback: Callable[[int, str | None], None] | None = None,
+    ) -> VideoGenerationProviderResult:
         ...
 
 
 class MockVideoGenerationProvider:
-    def generate(self, input_snapshot: dict) -> VideoGenerationProviderResult:
+    def generate(
+        self,
+        input_snapshot: dict,
+        progress_callback: Callable[[int, str | None], None] | None = None,
+    ) -> VideoGenerationProviderResult:
         prompt = str(input_snapshot.get("provider_prompt") or "my-life-movie")
         digest = sha256(prompt.encode("utf-8")).hexdigest()[:16]
+        if progress_callback is not None:
+            progress_callback(100, f"mock_{digest}")
         return VideoGenerationProviderResult(
             provider_job_id=f"mock_{digest}",
             output_url=f"https://cdn.mylifemovie.local/videos/{digest}.mp4",
@@ -61,14 +72,24 @@ class FalVideoGenerationProvider:
         self.max_wait_seconds = max_wait_seconds
         self.client = client or httpx.Client(timeout=60)
 
-    def generate(self, input_snapshot: dict) -> VideoGenerationProviderResult:
+    def generate(
+        self,
+        input_snapshot: dict,
+        progress_callback: Callable[[int, str | None], None] | None = None,
+    ) -> VideoGenerationProviderResult:
         payload = build_fal_payload(input_snapshot)
         submit_data = self._post_json(self._model_url(), payload)
         request_id = require_string(submit_data, "request_id")
+        if progress_callback is not None:
+            progress_callback(5, request_id)
         status_url = submit_data.get("status_url") or self._status_url(request_id)
         response_url = submit_data.get("response_url") or self._response_url(request_id)
 
-        completed_status = self._wait_until_completed(str(status_url))
+        completed_status = self._wait_until_completed(
+            str(status_url),
+            progress_callback=progress_callback,
+            provider_job_id=request_id,
+        )
         if completed_status.get("error"):
             raise VideoGenerationProviderError(str(completed_status["error"]))
 
@@ -81,7 +102,13 @@ class FalVideoGenerationProvider:
             thumbnail_url=thumbnail_url,
         )
 
-    def _wait_until_completed(self, status_url: str) -> dict:
+    def _wait_until_completed(
+        self,
+        status_url: str,
+        *,
+        progress_callback: Callable[[int, str | None], None] | None = None,
+        provider_job_id: str | None = None,
+    ) -> dict:
         deadline = time.monotonic() + self.max_wait_seconds
         last_status: dict | None = None
         while time.monotonic() <= deadline:
@@ -89,7 +116,11 @@ class FalVideoGenerationProvider:
             last_status = status_data
             status = status_data.get("status")
             if status == "COMPLETED":
+                if progress_callback is not None:
+                    progress_callback(95, provider_job_id)
                 return status_data
+            if progress_callback is not None:
+                progress_callback(10 if status == "IN_QUEUE" else 50, provider_job_id)
             if status not in {"IN_QUEUE", "IN_PROGRESS"}:
                 raise VideoGenerationProviderError(f"fal queue 상태를 처리할 수 없습니다: {status}")
             time.sleep(self.poll_interval_seconds)
@@ -152,7 +183,11 @@ class OpenAIVideoGenerationProvider:
         self.thumbnail_prefix = thumbnail_prefix
         self.client = client or OpenAI(api_key=api_key)
 
-    def generate(self, input_snapshot: dict) -> VideoGenerationProviderResult:
+    def generate(
+        self,
+        input_snapshot: dict,
+        progress_callback: Callable[[int, str | None], None] | None = None,
+    ) -> VideoGenerationProviderResult:
         prompt = build_openai_video_prompt(input_snapshot)
         video = self.client.videos.create(
             model=self.model,
@@ -160,8 +195,10 @@ class OpenAIVideoGenerationProvider:
             size=self.size,
             seconds=self.seconds,
         )
-        completed_video = self._wait_until_completed(video)
-        video_id = require_object_attr(completed_video, "id", "OpenAI 영상 응답에 id 값이 없습니다.")
+        video_id = require_object_attr(video, "id", "OpenAI 영상 응답에 id 값이 없습니다.")
+        if progress_callback is not None:
+            progress_callback(extract_openai_progress(video, default=1), video_id)
+        completed_video = self._wait_until_completed(video, progress_callback=progress_callback)
 
         video_object = self._download_variant(
             video_id=video_id,
@@ -176,17 +213,31 @@ class OpenAIVideoGenerationProvider:
             thumbnail_url=thumbnail_object.url if thumbnail_object is not None else None,
         )
 
-    def _wait_until_completed(self, video: object) -> object:
+    def _wait_until_completed(
+        self,
+        video: object,
+        *,
+        progress_callback: Callable[[int, str | None], None] | None = None,
+    ) -> object:
         deadline = time.monotonic() + self.max_wait_seconds
         current_video = video
         while time.monotonic() <= deadline:
             status = getattr(current_video, "status", None)
+            provider_job_id = getattr(current_video, "id", None)
+            if progress_callback is not None:
+                progress_callback(extract_openai_progress(current_video, default=1), provider_job_id)
             if status == "completed":
                 return current_video
             if status == "failed":
-                raise VideoGenerationProviderError(openai_video_error_message(current_video))
+                raise VideoGenerationProviderError(
+                    openai_video_error_message(current_video),
+                    provider_job_id=provider_job_id,
+                )
             if status not in {"queued", "in_progress"}:
-                raise VideoGenerationProviderError(f"OpenAI 영상 생성 상태를 처리할 수 없습니다: {status}")
+                raise VideoGenerationProviderError(
+                    f"OpenAI 영상 생성 상태를 처리할 수 없습니다: {status}",
+                    provider_job_id=provider_job_id,
+                )
 
             time.sleep(self.poll_interval_seconds)
             video_id = require_object_attr(current_video, "id", "OpenAI 영상 응답에 id 값이 없습니다.")
@@ -223,7 +274,9 @@ class OpenAIVideoGenerationProvider:
 
 
 class VideoGenerationProviderError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, provider_job_id: str | None = None) -> None:
+        super().__init__(message)
+        self.provider_job_id = provider_job_id
 
 
 class VideoGenerationProviderConfigError(VideoGenerationProviderError):
@@ -232,6 +285,9 @@ class VideoGenerationProviderConfigError(VideoGenerationProviderError):
 
 class VideoGenerationProviderTimeoutError(VideoGenerationProviderError):
     pass
+
+
+MAX_OPENAI_VIDEO_PROMPT_LENGTH = 2800
 
 
 def build_video_generation_provider(settings: Settings) -> VideoGenerationProvider:
@@ -290,23 +346,169 @@ def build_fal_payload(input_snapshot: dict) -> dict:
 
     return {
         "prompt": prompt,
-        "num_frames": 81,
-        "fps": 16,
-        "num_inference_steps": 8,
-        "resolution": "480p",
+        "num_frames": 121,
+        "fps": 24,
+        "num_inference_steps": 24,
+        "resolution": "720p",
         "aspect_ratio": "16:9",
         "enable_safety_checker": True,
         "video_output_type": "X264 (.mp4)",
-        "video_quality": "medium",
+        "video_quality": "high",
         "video_write_mode": "balanced",
     }
 
 
 def build_openai_video_prompt(input_snapshot: dict) -> str:
-    prompt = str(input_snapshot.get("provider_prompt") or "").strip()
-    if not prompt:
+    base_prompt = normalize_prompt_text(input_snapshot.get("provider_prompt"))
+    if not base_prompt:
         raise VideoGenerationProviderError("provider_prompt가 비어 있어 영상을 생성할 수 없습니다.")
-    return prompt
+
+    story = as_dict(input_snapshot.get("story"))
+    style = as_dict(input_snapshot.get("style"))
+    audio_direction = as_dict(input_snapshot.get("audio_direction"))
+    assets = as_dict(input_snapshot.get("assets"))
+    scenes = extract_scene_blueprint(input_snapshot.get("scenes"))
+
+    prompt_parts = [
+        "Create a premium cinematic short-film moment, not a slideshow or montage.",
+        f"Core story: {base_prompt}",
+        optional_prompt_line("Title", story.get("title")),
+        optional_prompt_line("Logline", story.get("logline")),
+        optional_prompt_line("Story summary", story.get("summary")),
+        optional_prompt_line("Protagonist", story.get("protagonist")),
+        optional_prompt_line("Time period", story.get("time_period")),
+        optional_prompt_line("Locations", join_prompt_values(story.get("locations"))),
+        optional_prompt_line("Emotional arc", join_prompt_values(story.get("emotions") or style.get("mood"))),
+        optional_prompt_line("Ending tone", story.get("ending_tone")),
+        optional_prompt_line("Visual style", style.get("visual_style")),
+        optional_prompt_line("Music mood reference", audio_direction.get("music_id")),
+        optional_prompt_block("Scene blueprint", scenes),
+        optional_prompt_line("Reference asset guidance", summarize_assets(assets)),
+        (
+            "Directorial intent: express the user's memory as a believable lived moment with "
+            "a clear beginning, emotional turn, and closing image inside one continuous scene."
+        ),
+        (
+            "Subject continuity: keep one consistent protagonist, consistent age, face, clothing, "
+            "hair, body scale, and spatial layout throughout the clip. Avoid identity drift."
+        ),
+        (
+            "Safety and casting: all visible people are fictional adults age 20 or older. "
+            "Do not depict minors, public figures, real identifiable people, nudity, sexual content, "
+            "graphic injury, self-harm, weapons, or illegal activity. Use symbolic adult actors for memories."
+        ),
+        (
+            "Cinematography: one coherent 16:9 cinematic shot, 35mm film look, slow dolly-in "
+            "or subtle handheld movement, stable framing, shallow depth of field, natural lens breathing, "
+            "layered foreground and background, no random camera jumps."
+        ),
+        (
+            "Lighting and texture: soft motivated light, realistic skin texture, atmospheric depth, "
+            "rich but restrained color grading, gentle film grain, physically plausible shadows and reflections."
+        ),
+        (
+            "Motion quality: natural human micro-expressions, believable hand movement, calm pacing, "
+            "no fast cuts, no sudden pose changes, no object warping, no floating props."
+        ),
+        (
+            "Strict quality constraints: no on-screen text, no captions, no subtitles, no logos, no watermarks, "
+            "no duplicated people, no distorted faces or hands, no melted objects, no flicker, "
+            "no low-resolution blur, no surreal artifacts unless explicitly required by the story."
+        ),
+    ]
+    prompt = "\n".join(part for part in prompt_parts if part)
+    return truncate_prompt(prompt, MAX_OPENAI_VIDEO_PROMPT_LENGTH)
+
+
+def as_dict(value: Any) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def normalize_prompt_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return re.sub(r"\s+", " ", str(value)).strip()
+
+
+def optional_prompt_line(label: str, value: Any) -> str | None:
+    text = normalize_prompt_text(value)
+    if not text:
+        return None
+    return f"{label}: {text}"
+
+
+def optional_prompt_block(label: str, values: list[str]) -> str | None:
+    if not values:
+        return None
+    lines = "\n".join(f"- {value}" for value in values)
+    return f"{label}:\n{lines}"
+
+
+def join_prompt_values(value: Any, *, limit: int = 5) -> str:
+    if isinstance(value, list):
+        items = [normalize_prompt_text(item) for item in value[:limit]]
+        return ", ".join(item for item in items if item)
+    return normalize_prompt_text(value)
+
+
+def extract_scene_blueprint(value: Any, *, limit: int = 4) -> list[str]:
+    if not isinstance(value, list):
+        return []
+
+    scenes: list[str] = []
+    for item in value:
+        scene = scene_blueprint_text(item)
+        if scene:
+            scenes.append(scene)
+        if len(scenes) >= limit:
+            break
+    return scenes
+
+
+def scene_blueprint_text(value: Any) -> str:
+    if isinstance(value, dict):
+        summary = ""
+        for key in ("visual_prompt", "summary", "visual", "description", "action"):
+            summary = normalize_prompt_text(value.get(key))
+            if summary:
+                break
+        if not summary:
+            return ""
+        order = normalize_prompt_text(value.get("order"))
+        emotion = normalize_prompt_text(value.get("emotion"))
+        narration = normalize_prompt_text(value.get("narration"))
+        camera = normalize_prompt_text(value.get("camera"))
+        details = [
+            summary,
+            f"emotion: {emotion}" if emotion else "",
+            f"camera: {camera}" if camera else "",
+            f"implied narration mood: {narration}" if narration else "",
+        ]
+        text = " | ".join(detail for detail in details if detail)
+        return f"{order}. {text}" if order else text
+    return normalize_prompt_text(value)
+
+
+def summarize_assets(assets: dict) -> str:
+    image_count = len(assets.get("images") or []) if isinstance(assets.get("images"), list) else 0
+    video_count = len(assets.get("videos") or []) if isinstance(assets.get("videos"), list) else 0
+    document_count = len(assets.get("documents") or []) if isinstance(assets.get("documents"), list) else 0
+    summary_parts = []
+    if image_count:
+        summary_parts.append(f"{image_count} uploaded image reference(s) for mood, place, and visual memory")
+    if video_count:
+        summary_parts.append(f"{video_count} uploaded video reference(s) for motion and atmosphere")
+    if document_count:
+        summary_parts.append(f"{document_count} uploaded document reference(s) for story facts only")
+    if not summary_parts:
+        return ""
+    return "; ".join(summary_parts) + ". Do not reproduce private text or identifiable details literally."
+
+
+def truncate_prompt(prompt: str, max_length: int) -> str:
+    if len(prompt) <= max_length:
+        return prompt
+    return prompt[: max_length - 1].rstrip() + "…"
 
 
 def require_string(data: dict, key: str) -> str:
@@ -388,12 +590,23 @@ def content_type_for_extension(extension: str) -> str:
 def openai_video_error_message(video: object) -> str:
     error = getattr(video, "error", None)
     if isinstance(error, dict):
+        code = error.get("code")
         message = error.get("message")
         if isinstance(message, str) and message:
-            return message
+            return f"{code}: {message}" if isinstance(code, str) and code else message
 
+    code = getattr(error, "code", None)
     message = getattr(error, "message", None)
     if isinstance(message, str) and message:
-        return message
+        return f"{code}: {message}" if isinstance(code, str) and code else message
 
     return "OpenAI 영상 생성에 실패했습니다."
+
+
+def extract_openai_progress(video: object, *, default: int) -> int:
+    progress = getattr(video, "progress", None)
+    if isinstance(progress, int):
+        return progress
+    if isinstance(progress, float):
+        return int(progress)
+    return default
