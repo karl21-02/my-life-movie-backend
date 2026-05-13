@@ -6,6 +6,7 @@ import pytest
 from app.core.config import Settings
 from app.services.video_generation_provider import (
     FalVideoGenerationProvider,
+    MAX_OPENAI_VIDEO_PROMPT_LENGTH,
     MockVideoGenerationProvider,
     OpenAIVideoGenerationProvider,
     VideoGenerationProviderConfigError,
@@ -93,10 +94,41 @@ def test_fal_video_generation_provider_submits_polls_and_reads_result():
 
 
 def test_build_openai_video_prompt_requires_provider_prompt():
-    assert build_openai_video_prompt({"provider_prompt": "cinematic story"}) == "cinematic story"
-
     with pytest.raises(VideoGenerationProviderError, match="provider_prompt"):
         build_openai_video_prompt({"provider_prompt": ""})
+
+
+def test_build_openai_video_prompt_compiles_structured_cinematic_prompt():
+    prompt = build_openai_video_prompt(
+        {
+            "provider_prompt": "warm cinematic life story",
+            "story": {
+                "title": "첫 독립",
+                "logline": "작은 방에서 시작된 성장 이야기",
+                "summary": "처음 혼자 살며 두려움과 설렘을 함께 느끼는 이야기",
+                "protagonist": "처음 독립한 사용자",
+                "time_period": "20대 초반",
+                "locations": ["원룸", "골목길"],
+                "emotions": ["설렘", "두려움", "성장"],
+                "ending_tone": "따뜻한 성취감",
+            },
+            "style": {"visual_style": "따뜻한 필름룩", "mood": ["nostalgic"]},
+            "audio_direction": {"music_id": 201},
+            "scenes": [
+                {"order": 1, "summary": "작은 원룸에서 짐을 풀며 창밖 빛을 바라보는 장면"},
+                {"order": 2, "summary": "저녁 골목길을 천천히 걸으며 마음을 정리하는 장면"},
+            ],
+        }
+    )
+
+    assert "Create a premium cinematic life-movie clip" in prompt
+    assert "Core story: warm cinematic life story" in prompt
+    assert "Title: 첫 독립" in prompt
+    assert "Locations: 원룸, 골목길" in prompt
+    assert "Primary scene focus: 1. 작은 원룸" in prompt
+    assert "Cinematography: one coherent cinematic shot" in prompt
+    assert "Quality constraints: no on-screen text" in prompt
+    assert len(prompt) <= MAX_OPENAI_VIDEO_PROMPT_LENGTH
 
 
 def test_openai_video_generation_provider_polls_downloads_and_returns_static_paths(tmp_path):
@@ -114,12 +146,12 @@ def test_openai_video_generation_provider_polls_downloads_and_returns_static_pat
             self.downloads: list[str] = []
 
         def create(self, **kwargs):
-            assert kwargs == {
-                "model": "sora-2",
-                "prompt": "warm cinematic life story",
-                "size": "1280x720",
-                "seconds": "4",
-            }
+            assert kwargs["model"] == "sora-2"
+            assert kwargs["size"] == "1280x720"
+            assert kwargs["seconds"] == "4"
+            assert "Core story: warm cinematic life story" in kwargs["prompt"]
+            assert "Cinematography: one coherent cinematic shot" in kwargs["prompt"]
+            assert "Quality constraints: no on-screen text" in kwargs["prompt"]
             return SimpleNamespace(id="video_123", status="queued")
 
         def retrieve(self, video_id: str):

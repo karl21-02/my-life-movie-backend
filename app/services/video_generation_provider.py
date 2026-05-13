@@ -3,7 +3,7 @@ from hashlib import sha256
 import re
 import tempfile
 import time
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 from openai import OpenAI
@@ -234,6 +234,9 @@ class VideoGenerationProviderTimeoutError(VideoGenerationProviderError):
     pass
 
 
+MAX_OPENAI_VIDEO_PROMPT_LENGTH = 1800
+
+
 def build_video_generation_provider(settings: Settings) -> VideoGenerationProvider:
     provider = resolve_video_generation_provider_name(settings)
     if provider == "mock":
@@ -303,10 +306,98 @@ def build_fal_payload(input_snapshot: dict) -> dict:
 
 
 def build_openai_video_prompt(input_snapshot: dict) -> str:
-    prompt = str(input_snapshot.get("provider_prompt") or "").strip()
-    if not prompt:
+    base_prompt = normalize_prompt_text(input_snapshot.get("provider_prompt"))
+    if not base_prompt:
         raise VideoGenerationProviderError("provider_prompt가 비어 있어 영상을 생성할 수 없습니다.")
-    return prompt
+
+    story = as_dict(input_snapshot.get("story"))
+    style = as_dict(input_snapshot.get("style"))
+    audio_direction = as_dict(input_snapshot.get("audio_direction"))
+    scenes = extract_scene_summaries(input_snapshot.get("scenes"))
+
+    prompt_parts = [
+        "Create a premium cinematic life-movie clip with realistic human emotion and natural motion.",
+        f"Core story: {base_prompt}",
+        optional_prompt_line("Title", story.get("title")),
+        optional_prompt_line("Logline", story.get("logline")),
+        optional_prompt_line("Story summary", story.get("summary")),
+        optional_prompt_line("Protagonist", story.get("protagonist")),
+        optional_prompt_line("Time period", story.get("time_period")),
+        optional_prompt_line("Locations", join_prompt_values(story.get("locations"))),
+        optional_prompt_line("Emotional arc", join_prompt_values(story.get("emotions") or style.get("mood"))),
+        optional_prompt_line("Ending tone", story.get("ending_tone")),
+        optional_prompt_line("Visual style", style.get("visual_style")),
+        optional_prompt_line("Music mood reference", audio_direction.get("music_id")),
+        optional_prompt_line("Primary scene focus", scenes[0] if scenes else None),
+        optional_prompt_line("Supporting scene details", " / ".join(scenes[1:3]) if len(scenes) > 1 else None),
+        (
+            "Cinematography: one coherent cinematic shot, 16:9 composition, 35mm film look, "
+            "slow dolly-in or gentle handheld movement, stable framing, shallow depth of field, "
+            "soft natural light, rich but realistic color grading."
+        ),
+        (
+            "Quality constraints: no on-screen text, no subtitles, no logos, no watermarks, "
+            "no distorted faces or hands, no abrupt cuts, no flicker, no low-resolution blur, "
+            "no surreal artifacts unless explicitly required by the story."
+        ),
+    ]
+    prompt = "\n".join(part for part in prompt_parts if part)
+    return truncate_prompt(prompt, MAX_OPENAI_VIDEO_PROMPT_LENGTH)
+
+
+def as_dict(value: Any) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def normalize_prompt_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return re.sub(r"\s+", " ", str(value)).strip()
+
+
+def optional_prompt_line(label: str, value: Any) -> str | None:
+    text = normalize_prompt_text(value)
+    if not text:
+        return None
+    return f"{label}: {text}"
+
+
+def join_prompt_values(value: Any, *, limit: int = 5) -> str:
+    if isinstance(value, list):
+        items = [normalize_prompt_text(item) for item in value[:limit]]
+        return ", ".join(item for item in items if item)
+    return normalize_prompt_text(value)
+
+
+def extract_scene_summaries(value: Any, *, limit: int = 3) -> list[str]:
+    if not isinstance(value, list):
+        return []
+
+    summaries: list[str] = []
+    for item in value:
+        summary = scene_summary_text(item)
+        if summary:
+            summaries.append(summary)
+        if len(summaries) >= limit:
+            break
+    return summaries
+
+
+def scene_summary_text(value: Any) -> str:
+    if isinstance(value, dict):
+        for key in ("summary", "visual", "description", "action"):
+            summary = normalize_prompt_text(value.get(key))
+            if summary:
+                order = normalize_prompt_text(value.get("order"))
+                return f"{order}. {summary}" if order else summary
+        return ""
+    return normalize_prompt_text(value)
+
+
+def truncate_prompt(prompt: str, max_length: int) -> str:
+    if len(prompt) <= max_length:
+        return prompt
+    return prompt[: max_length - 1].rstrip() + "…"
 
 
 def require_string(data: dict, key: str) -> str:
