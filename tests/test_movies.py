@@ -10,7 +10,7 @@ def create_test_client() -> TestClient:
 # ── 목록 조회 ───────────────────────────────────────────────
 
 def test_get_movies_returns_list():
-    response = create_test_client().get("/api/v1/movies")
+    response = create_test_client().get("/api/movies")
 
     assert response.status_code == 200
     body = response.json()
@@ -19,7 +19,7 @@ def test_get_movies_returns_list():
 
 
 def test_get_movies_summary_shape():
-    response = create_test_client().get("/api/v1/movies")
+    response = create_test_client().get("/api/movies")
 
     first = response.json()[0]
     assert "id" in first
@@ -34,7 +34,7 @@ def test_get_movies_summary_shape():
 # ── 상세 조회 ───────────────────────────────────────────────
 
 def test_get_movie_returns_detail():
-    response = create_test_client().get("/api/v1/movies/1")
+    response = create_test_client().get("/api/movies/1")
 
     assert response.status_code == 200
     body = response.json()
@@ -48,7 +48,7 @@ def test_get_movie_returns_detail():
 
 
 def test_get_movie_ost_shape():
-    response = create_test_client().get("/api/v1/movies/1")
+    response = create_test_client().get("/api/movies/1")
 
     ost = response.json()["ost"]
     assert len(ost) > 0
@@ -58,7 +58,7 @@ def test_get_movie_ost_shape():
 
 def test_get_movie_not_found_returns_problem_detail():
     response = create_test_client().get(
-        "/api/v1/movies/9999",
+        "/api/movies/9999",
         headers={"X-Request-ID": "req_not_found"},
     )
 
@@ -73,9 +73,9 @@ def test_get_movie_not_found_returns_problem_detail():
 
 def test_delete_movie_returns_message():
     client = create_test_client()
-    assert client.get("/api/v1/movies/3").status_code == 200
+    assert client.get("/api/movies/3").status_code == 200
 
-    response = client.delete("/api/v1/movies/3")
+    response = client.delete("/api/movies/3")
 
     assert response.status_code == 200
     assert "message" in response.json()
@@ -83,7 +83,7 @@ def test_delete_movie_returns_message():
 
 def test_delete_movie_not_found_returns_problem_detail():
     response = create_test_client().delete(
-        "/api/v1/movies/9999",
+        "/api/movies/9999",
         headers={"X-Request-ID": "req_del_not_found"},
     )
 
@@ -96,7 +96,7 @@ def test_delete_movie_not_found_returns_problem_detail():
 # ── 다운로드 ─────────────────────────────────────────────────
 
 def test_download_movie_returns_info():
-    response = create_test_client().get("/api/v1/movies/1/download")
+    response = create_test_client().get("/api/movies/1/download")
 
     assert response.status_code == 200
     body = response.json()
@@ -107,7 +107,7 @@ def test_download_movie_returns_info():
 
 def test_download_movie_not_found_returns_problem_detail():
     response = create_test_client().get(
-        "/api/v1/movies/9999/download",
+        "/api/movies/9999/download",
         headers={"X-Request-ID": "req_dl_not_found"},
     )
 
@@ -121,7 +121,7 @@ def test_download_movie_not_found_returns_problem_detail():
 
 def test_request_id_propagated_in_movie_response():
     response = create_test_client().get(
-        "/api/v1/movies",
+        "/api/movies",
         headers={"X-Request-ID": "req_movie_id_test"},
     )
 
@@ -132,13 +132,13 @@ def test_request_id_propagated_in_movie_response():
 # ── 비슷한 영화 추천 ──────────────────────────────────────────
 
 def test_get_similar_movies_returns_200():
-    response = create_test_client().get("/api/v1/movies/1/similar")
+    response = create_test_client().get("/api/movies/1/similar")
 
     assert response.status_code == 200
 
 
 def test_get_similar_movies_response_shape():
-    response = create_test_client().get("/api/v1/movies/1/similar")
+    response = create_test_client().get("/api/movies/1/similar")
 
     body = response.json()
     assert body["movie_id"] == 1
@@ -146,7 +146,7 @@ def test_get_similar_movies_response_shape():
 
 
 def test_get_similar_movies_item_shape():
-    response = create_test_client().get("/api/v1/movies/1/similar")
+    response = create_test_client().get("/api/movies/1/similar")
 
     movies = response.json()["similar_movies"]
     assert len(movies) > 0
@@ -157,7 +157,7 @@ def test_get_similar_movies_item_shape():
 
 
 def test_get_similar_movies_limit():
-    response = create_test_client().get("/api/v1/movies/1/similar")
+    response = create_test_client().get("/api/movies/1/similar")
 
     # 장르별 유명 영화 풀이 10편이므로 최대 4편 반환
     movies = response.json()["similar_movies"]
@@ -166,8 +166,8 @@ def test_get_similar_movies_limit():
 
 def test_get_similar_movies_genre_based():
     # movie_id=1(로맨스), movie_id=2(드라마): 추천 결과가 달라야 한다
-    res1 = create_test_client().get("/api/v1/movies/1/similar")
-    res2 = create_test_client().get("/api/v1/movies/2/similar")
+    res1 = create_test_client().get("/api/movies/1/similar")
+    res2 = create_test_client().get("/api/movies/2/similar")
 
     ids1 = {m["id"] for m in res1.json()["similar_movies"]}
     ids2 = {m["id"] for m in res2.json()["similar_movies"]}
@@ -177,7 +177,7 @@ def test_get_similar_movies_genre_based():
 
 def test_get_similar_movies_not_found_returns_problem_detail():
     response = create_test_client().get(
-        "/api/v1/movies/9999/similar",
+        "/api/movies/9999/similar",
         headers={"X-Request-ID": "req_similar_not_found"},
     )
 

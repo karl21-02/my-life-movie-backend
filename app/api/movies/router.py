@@ -24,7 +24,7 @@ from app.services.access_token_service import AccessTokenClaims
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api/v1/movies", tags=["movies"])
+router = APIRouter(prefix="/api/movies", tags=["movies"])
 
 # 파일 업로드 시 허용되는 확장자 목록 (소문자 기준)
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf", ".txt", ".mp4", ".mov"}
