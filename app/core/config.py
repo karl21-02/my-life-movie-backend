@@ -133,7 +133,7 @@ def get_settings() -> Settings:
         openai_video_seconds=os.getenv("OPENAI_VIDEO_SECONDS", "8"),
         openai_video_poll_interval_seconds=parse_float_env(
             os.getenv("OPENAI_VIDEO_POLL_INTERVAL_SECONDS"),
-            10,
+            5,
         ),
         openai_video_max_wait_seconds=parse_int_env(
             os.getenv("OPENAI_VIDEO_MAX_WAIT_SECONDS"),
