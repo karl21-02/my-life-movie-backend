@@ -113,13 +113,25 @@ def test_get_movie_returns_detail(api_client, db_session: Session, mock_user: Ac
     assert body["status"] == "COMPLETED"
     assert body["output_url"] == "/generated/videos/video_123.mp4"
     assert isinstance(body["ost"], list)
-    assert len(body["similar_movies"]) > 0
-    assert body["similar_movies"][0]["title"] == "브렉퍼스트 클럽"
-    assert body["similar_movies"][0]["external_url"] is not None
+    assert body["similar_movies"] == []
 
 
 def test_get_movie_persists_recommendations(api_client, db_session: Session, mock_user: AccessTokenClaims):
     movie = create_completed_movie(db_session, user_id=mock_user.user_id)
+    db_session.add(
+        MovieRecommendation(
+            movie_id=movie.id,
+            provider="tmdb",
+            provider_movie_id="2108",
+            title="저장된 추천",
+            poster_url="https://image.tmdb.org/t/p/w500/poster.jpg",
+            external_url="https://www.themoviedb.org/movie/2108",
+            rank=1,
+            reason="성장 서사가 유사합니다.",
+            metadata_json={"score": 5.0},
+        )
+    )
+    db_session.commit()
 
     first_response = api_client.get(f"/api/movies/{movie.id}")
     second_response = api_client.get(f"/api/movies/{movie.id}")
@@ -132,8 +144,9 @@ def test_get_movie_persists_recommendations(api_client, db_session: Session, moc
         .order_by(MovieRecommendation.rank)
         .all()
     )
-    assert len(stored_recommendations) == 4
-    assert stored_recommendations[0].title == "브렉퍼스트 클럽"
+    assert len(stored_recommendations) == 1
+    assert stored_recommendations[0].title == "저장된 추천"
+    assert first_response.json()["similar_movies"][0]["title"] == "저장된 추천"
 
 
 def test_get_movie_not_found_returns_problem_detail(api_client):
@@ -264,8 +277,20 @@ def test_get_similar_movies_response_shape(api_client, db_session: Session, mock
     assert db_session.query(MovieRecommendation).filter_by(movie_id=movie.id).count() == len(body["similar_movies"])
 
 
-def test_get_similar_movies_item_shape(api_client, db_session: Session, mock_user: AccessTokenClaims):
+def test_get_similar_movies_item_shape_with_stored_recommendation(api_client, db_session: Session, mock_user: AccessTokenClaims):
     movie = create_completed_movie(db_session, user_id=mock_user.user_id, theme_id=1)
+    db_session.add(
+        MovieRecommendation(
+            movie_id=movie.id,
+            provider="tmdb",
+            provider_movie_id="2108",
+            title="저장된 추천",
+            poster_url="https://image.tmdb.org/t/p/w500/poster.jpg",
+            external_url="https://www.themoviedb.org/movie/2108",
+            rank=1,
+        )
+    )
+    db_session.commit()
 
     response = api_client.get(f"/api/movies/{movie.id}/similar")
 
@@ -286,27 +311,6 @@ def test_get_similar_movies_limit(api_client, db_session: Session, mock_user: Ac
 
     movies = response.json()["similar_movies"]
     assert len(movies) <= 4
-
-
-def test_get_similar_movies_genre_based(api_client, db_session: Session, mock_user: AccessTokenClaims):
-    first_movie = create_completed_movie(
-        db_session,
-        user_id=mock_user.user_id,
-        title="하이틴 영화",
-        theme_id=1,
-    )
-    second_movie = create_completed_movie(
-        db_session,
-        user_id=mock_user.user_id,
-        title="사이버펑크 영화",
-        theme_id=2,
-    )
-    res1 = api_client.get(f"/api/movies/{first_movie.id}/similar")
-    res2 = api_client.get(f"/api/movies/{second_movie.id}/similar")
-
-    ids1 = {m["id"] for m in res1.json()["similar_movies"]}
-    ids2 = {m["id"] for m in res2.json()["similar_movies"]}
-    assert ids1.isdisjoint(ids2)
 
 
 def test_get_similar_movies_not_found_returns_problem_detail(api_client):

@@ -1,11 +1,23 @@
+import json
+import re
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
+from openai import OpenAI
 
 from app.core.config import Settings
+from app.models.movie import Movie
 from app.models.movie_recommendation import MovieRecommendation
 from app.repositories.movie_recommendation_repository import MovieRecommendationRepository
+
+
+@dataclass(frozen=True)
+class MovieRecommendationPlan:
+    queries: list[str]
+    keywords: list[str]
+    mood: str
+    reason_template: str
 
 
 @dataclass(frozen=True)
@@ -14,13 +26,74 @@ class RecommendedMovie:
     title: str
     thumbnail: str
     external_url: str | None = None
-    provider: str = "fallback"
-    search_query: str | None = None
+    provider: str = "tmdb"
+    reason: str | None = None
+    score: float = 0.0
 
 
 class MovieMetadataProvider(Protocol):
-    def search_movie(self, title: str) -> RecommendedMovie | None:
+    def search_movies(self, query: str, *, limit: int = 6) -> list[dict]:
         ...
+
+
+class RecommendationPlanner(Protocol):
+    def build_plan(self, movie: Movie, genre: str) -> MovieRecommendationPlan:
+        ...
+
+
+class OpenAIRecommendationPlanner:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        timeout_seconds: float = 8,
+        client: OpenAI | None = None,
+    ) -> None:
+        self.client = client or OpenAI(api_key=api_key, timeout=timeout_seconds)
+
+    def build_plan(self, movie: Movie, genre: str) -> MovieRecommendationPlan:
+        response = self.client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "당신은 영화 추천 검색 전략가입니다. 사용자의 인생 영화 입력을 바탕으로 "
+                        "TMDB 검색에 적합한 영어 검색 쿼리와 유사도 키워드를 JSON으로만 반환하세요. "
+                        "실존 영화 제목을 억지로 만들지 말고, 장르/감정/서사/시각 분위기를 검색 가능한 표현으로 바꾸세요."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(build_movie_recommendation_context(movie, genre), ensure_ascii=False),
+                },
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=500,
+        )
+        content = response.choices[0].message.content or "{}"
+        return parse_recommendation_plan(json.loads(content), movie, genre)
+
+
+class HeuristicRecommendationPlanner:
+    def build_plan(self, movie: Movie, genre: str) -> MovieRecommendationPlan:
+        context = build_movie_recommendation_context(movie, genre)
+        keyword_candidates = [
+            genre,
+            *as_text_list(context["story"].get("emotions")),
+            *as_text_list(context["story"].get("locations")),
+            normalize_text(context["story"].get("visual_style")),
+            normalize_text(context["story"].get("ending_tone")),
+            normalize_text(context.get("summary")),
+        ]
+        keywords = [keyword for keyword in keyword_candidates if keyword][:8]
+        query = " ".join(keywords[:5]) or genre or "emotional life drama"
+        return MovieRecommendationPlan(
+            queries=[query, f"{genre} emotional drama".strip()],
+            keywords=keywords,
+            mood=normalize_text(context["story"].get("ending_tone")) or genre,
+            reason_template="스토리 분위기와 감정선이 유사합니다.",
+        )
 
 
 class TMDBMovieMetadataProvider:
@@ -42,15 +115,15 @@ class TMDBMovieMetadataProvider:
         self.language = language
         self.client = client or httpx.Client(timeout=timeout_seconds)
 
-    def search_movie(self, title: str) -> RecommendedMovie | None:
-        if not self.access_token:
-            return None
+    def search_movies(self, query: str, *, limit: int = 6) -> list[dict]:
+        if not self.access_token or not query.strip():
+            return []
 
         response = self.client.get(
             f"{self.api_base_url}/search/movie",
             headers={"Authorization": f"Bearer {self.access_token}"},
             params={
-                "query": title,
+                "query": query,
                 "language": self.language,
                 "include_adult": "false",
                 "page": 1,
@@ -58,64 +131,83 @@ class TMDBMovieMetadataProvider:
         )
         response.raise_for_status()
         results = response.json().get("results")
-        if not isinstance(results, list) or not results:
-            return None
+        if not isinstance(results, list):
+            return []
+        return [result for result in results[:limit] if isinstance(result, dict)]
 
-        return build_tmdb_recommendation(results[0], self.image_base_url, self.poster_size)
+    def poster_url(self, poster_path: str | None) -> str:
+        if not poster_path:
+            return ""
+        return f"{self.image_base_url}/{self.poster_size}/{poster_path.lstrip('/')}"
 
 
 class MovieRecommendationService:
     def __init__(
         self,
         *,
-        metadata_provider: MovieMetadataProvider | None = None,
+        metadata_provider: TMDBMovieMetadataProvider | None = None,
+        planner: RecommendationPlanner | None = None,
         recommendation_repository: MovieRecommendationRepository | None = None,
     ) -> None:
         self.metadata_provider = metadata_provider
+        self.planner = planner or HeuristicRecommendationPlanner()
         self.recommendation_repository = recommendation_repository
 
-    def recommend_by_genre(self, genre: str, *, limit: int = 4) -> list[RecommendedMovie]:
-        fallback_movies = fallback_movies_by_genre(genre)[:limit]
+    def recommend_for_movie(self, movie: Movie, genre: str, *, limit: int = 4) -> list[RecommendedMovie]:
         if self.metadata_provider is None:
-            return fallback_movies
+            return []
 
-        recommendations: list[RecommendedMovie] = []
-        for fallback_movie in fallback_movies:
+        plan = self.planner.build_plan(movie, genre)
+        candidates = self.collect_tmdb_candidates(plan.queries)
+        ranked_movies = rank_tmdb_candidates(candidates, plan)
+        return [
+            build_recommended_movie(candidate, self.metadata_provider, plan)
+            for candidate in ranked_movies[:limit]
+        ]
+
+    def collect_tmdb_candidates(self, queries: list[str]) -> list[dict]:
+        seen_ids: set[int] = set()
+        candidates: list[dict] = []
+        for query in queries:
             try:
-                recommended_movie = self.metadata_provider.search_movie(
-                    fallback_movie.search_query or fallback_movie.title
-                )
+                results = self.metadata_provider.search_movies(query, limit=8) if self.metadata_provider else []
             except Exception:
-                recommended_movie = None
-            recommendations.append(recommended_movie or fallback_movie)
-        return recommendations
+                results = []
+            for result in results:
+                movie_id = result.get("id")
+                if isinstance(movie_id, int) and movie_id not in seen_ids:
+                    seen_ids.add(movie_id)
+                    candidates.append(result)
+        return candidates
 
     def get_or_create_for_movie(
         self,
         *,
-        movie_id: int,
+        movie: Movie,
         genre: str,
         limit: int = 4,
     ) -> list[RecommendedMovie]:
         if self.recommendation_repository is None:
-            return self.recommend_by_genre(genre, limit=limit)
+            return self.recommend_for_movie(movie, genre, limit=limit)
 
-        stored_recommendations = self.recommendation_repository.list_by_movie_id(movie_id)
+        stored_recommendations = self.recommendation_repository.list_by_movie_id(movie.id)
         if stored_recommendations:
             return [
                 recommended_movie_from_model(recommendation)
                 for recommendation in stored_recommendations[:limit]
             ]
 
-        recommendations = self.recommend_by_genre(genre, limit=limit)
+        recommendations = self.recommend_for_movie(movie, genre, limit=limit)
+        if not recommendations:
+            return []
+
         stored_recommendations = self.recommendation_repository.replace_for_movie(
-            movie_id=movie_id,
+            movie_id=movie.id,
             recommendations=[
                 movie_recommendation_model_from_recommended_movie(
-                    movie_id=movie_id,
+                    movie_id=movie.id,
                     recommendation=recommendation,
                     rank=index + 1,
-                    genre=genre,
                 )
                 for index, recommendation in enumerate(recommendations)
             ],
@@ -137,18 +229,118 @@ def build_movie_recommendation_service(settings: Settings) -> MovieRecommendatio
             language=settings.tmdb_language,
             timeout_seconds=settings.tmdb_timeout_seconds,
         )
-    return MovieRecommendationService(metadata_provider=provider)
+
+    planner: RecommendationPlanner | None = None
+    if settings.openai_api_key:
+        planner = OpenAIRecommendationPlanner(api_key=settings.openai_api_key)
+
+    return MovieRecommendationService(metadata_provider=provider, planner=planner)
+
+
+def build_movie_recommendation_context(movie: Movie, genre: str) -> dict[str, Any]:
+    story_brief = movie.story_brief if isinstance(movie.story_brief, dict) else {}
+    return {
+        "genre": genre,
+        "summary": movie.current_draft or "",
+        "generation_prompt": movie.generation_prompt or "",
+        "story": story_brief,
+        "scenes": movie.scene_plan if isinstance(movie.scene_plan, list) else [],
+    }
+
+
+def parse_recommendation_plan(data: dict[str, Any], movie: Movie, genre: str) -> MovieRecommendationPlan:
+    heuristic = HeuristicRecommendationPlanner().build_plan(movie, genre)
+    queries = [normalize_text(query) for query in data.get("queries", []) if normalize_text(query)]
+    keywords = [normalize_text(keyword) for keyword in data.get("keywords", []) if normalize_text(keyword)]
+    return MovieRecommendationPlan(
+        queries=(queries or heuristic.queries)[:5],
+        keywords=(keywords or heuristic.keywords)[:12],
+        mood=normalize_text(data.get("mood")) or heuristic.mood,
+        reason_template=normalize_text(data.get("reason_template")) or heuristic.reason_template,
+    )
+
+
+def rank_tmdb_candidates(candidates: list[dict], plan: MovieRecommendationPlan) -> list[dict]:
+    scored_candidates = [
+        (score_tmdb_candidate(candidate, plan), candidate)
+        for candidate in candidates
+    ]
+    scored_candidates.sort(key=lambda item: item[0], reverse=True)
+    return [
+        {**candidate, "_similarity_score": score}
+        for score, candidate in scored_candidates
+        if score > 0
+    ]
+
+
+def score_tmdb_candidate(candidate: dict, plan: MovieRecommendationPlan) -> float:
+    searchable_text = normalize_text(
+        " ".join(
+            [
+                str(candidate.get("title") or ""),
+                str(candidate.get("original_title") or ""),
+                str(candidate.get("overview") or ""),
+            ]
+        )
+    ).lower()
+    score = 0.0
+    for keyword in plan.keywords:
+        normalized_keyword = keyword.lower()
+        if normalized_keyword and normalized_keyword in searchable_text:
+            score += 2.0
+        else:
+            score += keyword_overlap_score(normalized_keyword, searchable_text)
+
+    popularity = candidate.get("popularity")
+    if isinstance(popularity, int | float):
+        score += min(float(popularity) / 100, 1.5)
+    if candidate.get("poster_path"):
+        score += 0.5
+    return round(score, 4)
+
+
+def keyword_overlap_score(keyword: str, text: str) -> float:
+    tokens = [token for token in re.split(r"\W+", keyword) if len(token) >= 3]
+    if not tokens:
+        return 0.0
+    return sum(0.4 for token in tokens if token in text)
+
+
+def build_recommended_movie(
+    candidate: dict,
+    provider: TMDBMovieMetadataProvider,
+    plan: MovieRecommendationPlan,
+) -> RecommendedMovie:
+    movie_id = candidate.get("id")
+    title = candidate.get("title") or candidate.get("name") or candidate.get("original_title")
+    if not isinstance(movie_id, int) or not isinstance(title, str) or not title:
+        raise ValueError("TMDB 추천 후보에 필수 값이 없습니다.")
+
+    score = float(candidate.get("_similarity_score") or 0.0)
+    return RecommendedMovie(
+        id=movie_id,
+        title=title,
+        thumbnail=provider.poster_url(candidate.get("poster_path")),
+        external_url=f"https://www.themoviedb.org/movie/{movie_id}",
+        provider="tmdb",
+        reason=plan.reason_template,
+        score=score,
+    )
 
 
 def recommended_movie_from_model(model: MovieRecommendation) -> RecommendedMovie:
     provider_movie_id = model.provider_movie_id
     parsed_id = int(provider_movie_id) if provider_movie_id and provider_movie_id.isdigit() else model.id
+    metadata = model.metadata_json if isinstance(model.metadata_json, dict) else {}
+    score = metadata.get("score")
     return RecommendedMovie(
         id=parsed_id,
         title=model.title,
         thumbnail=model.poster_url,
         external_url=model.external_url,
         provider=model.provider,
+        reason=model.reason,
+        score=float(score) if isinstance(score, int | float) else 0.0,
     )
 
 
@@ -157,7 +349,6 @@ def movie_recommendation_model_from_recommended_movie(
     movie_id: int,
     recommendation: RecommendedMovie,
     rank: int,
-    genre: str,
 ) -> MovieRecommendation:
     return MovieRecommendation(
         movie_id=movie_id,
@@ -167,217 +358,19 @@ def movie_recommendation_model_from_recommended_movie(
         poster_url=recommendation.thumbnail,
         external_url=recommendation.external_url,
         rank=rank,
-        reason=f"{genre} 테마 기반 추천",
-        metadata_json={"source": recommendation.provider},
+        reason=recommendation.reason,
+        metadata_json={"source": recommendation.provider, "score": recommendation.score},
     )
 
 
-def build_tmdb_recommendation(data: dict, image_base_url: str, poster_size: str) -> RecommendedMovie | None:
-    movie_id = data.get("id")
-    title = data.get("title") or data.get("name")
-    poster_path = data.get("poster_path")
-    if not isinstance(movie_id, int) or not isinstance(title, str) or not title:
-        return None
-
-    thumbnail = ""
-    if isinstance(poster_path, str) and poster_path:
-        thumbnail = f"{image_base_url.rstrip('/')}/{poster_size.strip('/')}/{poster_path.lstrip('/')}"
-
-    return RecommendedMovie(
-        id=movie_id,
-        title=title,
-        thumbnail=thumbnail,
-        external_url=f"https://www.themoviedb.org/movie/{movie_id}",
-        provider="tmdb",
-    )
+def normalize_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return re.sub(r"\s+", " ", str(value)).strip()
 
 
-def fallback_movies_by_genre(genre: str) -> list[RecommendedMovie]:
-    return [
-        RecommendedMovie(**movie)
-        for movie in FALLBACK_MOVIES_BY_GENRE.get(genre, [])
-    ]
-
-
-FALLBACK_MOVIES_BY_GENRE = {
-    "하이틴": [
-        {
-            "id": 101,
-            "title": "브렉퍼스트 클럽",
-            "thumbnail": "https://picsum.photos/seed/fam101/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=The%20Breakfast%20Club",
-            "search_query": "The Breakfast Club",
-        },
-        {
-            "id": 102,
-            "title": "퀸카로 살아남는 법",
-            "thumbnail": "https://picsum.photos/seed/fam102/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=Mean%20Girls",
-            "search_query": "Mean Girls",
-        },
-        {
-            "id": 103,
-            "title": "사랑할 수 없는 10가지 이유",
-            "thumbnail": "https://picsum.photos/seed/fam103/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=10%20Things%20I%20Hate%20About%20You",
-            "search_query": "10 Things I Hate About You",
-        },
-        {
-            "id": 104,
-            "title": "이지 에이",
-            "thumbnail": "https://picsum.photos/seed/fam104/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=Easy%20A",
-            "search_query": "Easy A",
-        },
-    ],
-    "사이버펑크": [
-        {
-            "id": 201,
-            "title": "블레이드 러너 2049",
-            "thumbnail": "https://picsum.photos/seed/fam201/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=Blade%20Runner%202049",
-            "search_query": "Blade Runner 2049",
-        },
-        {
-            "id": 202,
-            "title": "매트릭스",
-            "thumbnail": "https://picsum.photos/seed/fam202/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=The%20Matrix",
-            "search_query": "The Matrix",
-        },
-        {
-            "id": 203,
-            "title": "공각기동대",
-            "thumbnail": "https://picsum.photos/seed/fam203/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=Ghost%20in%20the%20Shell",
-            "search_query": "Ghost in the Shell",
-        },
-        {
-            "id": 204,
-            "title": "아키라",
-            "thumbnail": "https://picsum.photos/seed/fam204/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=Akira",
-            "search_query": "Akira",
-        },
-    ],
-    "무성영화": [
-        {
-            "id": 301,
-            "title": "아티스트",
-            "thumbnail": "https://picsum.photos/seed/fam301/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=The%20Artist",
-            "search_query": "The Artist",
-        },
-        {
-            "id": 302,
-            "title": "메트로폴리스",
-            "thumbnail": "https://picsum.photos/seed/fam302/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=Metropolis",
-            "search_query": "Metropolis",
-        },
-        {
-            "id": 303,
-            "title": "시티 라이트",
-            "thumbnail": "https://picsum.photos/seed/fam303/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=City%20Lights",
-            "search_query": "City Lights",
-        },
-        {
-            "id": 304,
-            "title": "황금광 시대",
-            "thumbnail": "https://picsum.photos/seed/fam304/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=The%20Gold%20Rush",
-            "search_query": "The Gold Rush",
-        },
-    ],
-    "동화": [
-        {
-            "id": 401,
-            "title": "신데렐라",
-            "thumbnail": "https://picsum.photos/seed/fam401/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=Cinderella",
-            "search_query": "Cinderella",
-        },
-        {
-            "id": 402,
-            "title": "미녀와 야수",
-            "thumbnail": "https://picsum.photos/seed/fam402/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=Beauty%20and%20the%20Beast",
-            "search_query": "Beauty and the Beast",
-        },
-        {
-            "id": 403,
-            "title": "라푼젤",
-            "thumbnail": "https://picsum.photos/seed/fam403/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=Tangled",
-            "search_query": "Tangled",
-        },
-        {
-            "id": 404,
-            "title": "마법에 걸린 사랑",
-            "thumbnail": "https://picsum.photos/seed/fam404/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=Enchanted",
-            "search_query": "Enchanted",
-        },
-    ],
-    "재패니즈 노스탤지아": [
-        {
-            "id": 501,
-            "title": "이 세상의 한 구석에",
-            "thumbnail": "https://picsum.photos/seed/fam501/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=In%20This%20Corner%20of%20the%20World",
-            "search_query": "In This Corner of the World",
-        },
-        {
-            "id": 502,
-            "title": "추억은 방울방울",
-            "thumbnail": "https://picsum.photos/seed/fam502/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=Only%20Yesterday",
-            "search_query": "Only Yesterday",
-        },
-        {
-            "id": 503,
-            "title": "귀를 기울이면",
-            "thumbnail": "https://picsum.photos/seed/fam503/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=Whisper%20of%20the%20Heart",
-            "search_query": "Whisper of the Heart",
-        },
-        {
-            "id": 504,
-            "title": "초속 5센티미터",
-            "thumbnail": "https://picsum.photos/seed/fam504/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=5%20Centimeters%20per%20Second",
-            "search_query": "5 Centimeters per Second",
-        },
-    ],
-    "지브리": [
-        {
-            "id": 601,
-            "title": "센과 치히로의 행방불명",
-            "thumbnail": "https://picsum.photos/seed/fam601/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=Spirited%20Away",
-            "search_query": "Spirited Away",
-        },
-        {
-            "id": 602,
-            "title": "하울의 움직이는 성",
-            "thumbnail": "https://picsum.photos/seed/fam602/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=Howl%27s%20Moving%20Castle",
-            "search_query": "Howl's Moving Castle",
-        },
-        {
-            "id": 603,
-            "title": "모노노케 히메",
-            "thumbnail": "https://picsum.photos/seed/fam603/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=Princess%20Mononoke",
-            "search_query": "Princess Mononoke",
-        },
-        {
-            "id": 604,
-            "title": "마녀 배달부 키키",
-            "thumbnail": "https://picsum.photos/seed/fam604/400/600",
-            "external_url": "https://www.themoviedb.org/search?query=Kiki%27s%20Delivery%20Service",
-            "search_query": "Kiki's Delivery Service",
-        },
-    ],
-}
+def as_text_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [normalize_text(item) for item in value if normalize_text(item)]
+    text = normalize_text(value)
+    return [text] if text else []

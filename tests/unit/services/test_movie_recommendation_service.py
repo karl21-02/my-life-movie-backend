@@ -2,29 +2,53 @@ import httpx
 import pytest
 
 from app.core.config import Settings
+from app.models.movie import Movie, MovieStatus
 from app.models.movie_recommendation import MovieRecommendation
 from app.services.movie_recommendation_service import (
+    HeuristicRecommendationPlanner,
+    MovieRecommendationPlan,
     MovieRecommendationService,
+    OpenAIRecommendationPlanner,
     TMDBMovieMetadataProvider,
     build_movie_recommendation_service,
+    rank_tmdb_candidates,
 )
 
 
 pytestmark = pytest.mark.unit
 
 
-def test_movie_recommendation_service_uses_fallback_without_provider():
+def sample_movie() -> Movie:
+    return Movie(
+        id=1,
+        user_id=1,
+        theme_id=1,
+        current_draft="첫 독립의 설렘과 두려움을 담은 성장 영화",
+        story_brief={
+            "title": "첫 독립",
+            "logline": "작은 방에서 시작된 성장 이야기",
+            "locations": ["원룸"],
+            "emotions": ["설렘", "두려움", "성장"],
+            "visual_style": "따뜻한 필름룩",
+            "ending_tone": "성장",
+        },
+        scene_plan=[{"summary": "작은 원룸에서 짐을 푸는 장면"}],
+        generation_prompt="coming of age, first apartment, warm nostalgic drama",
+        files=[],
+        chat_history=[],
+        status=MovieStatus.COMPLETED,
+    )
+
+
+def test_movie_recommendation_service_returns_empty_without_tmdb_provider():
     service = MovieRecommendationService()
 
-    movies = service.recommend_by_genre("하이틴")
+    movies = service.recommend_for_movie(sample_movie(), "하이틴")
 
-    assert len(movies) == 4
-    assert movies[0].title == "브렉퍼스트 클럽"
-    assert movies[0].provider == "fallback"
-    assert movies[0].external_url is not None
+    assert movies == []
 
 
-def test_tmdb_movie_metadata_provider_maps_search_result():
+def test_tmdb_movie_metadata_provider_returns_search_results():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["authorization"] == "Bearer test-token"
         assert request.url.path == "/3/search/movie"
@@ -36,6 +60,8 @@ def test_tmdb_movie_metadata_provider_maps_search_result():
                         "id": 2108,
                         "title": "The Breakfast Club",
                         "poster_path": "/poster.jpg",
+                        "overview": "A warm coming of age story.",
+                        "popularity": 30,
                     }
                 ]
             },
@@ -51,34 +77,91 @@ def test_tmdb_movie_metadata_provider_maps_search_result():
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 
-    movie = provider.search_movie("브렉퍼스트 클럽")
+    movies = provider.search_movies("coming of age")
 
-    assert movie is not None
-    assert movie.id == 2108
-    assert movie.title == "The Breakfast Club"
-    assert movie.thumbnail == "https://image.tmdb.org/t/p/w500/poster.jpg"
-    assert movie.external_url == "https://www.themoviedb.org/movie/2108"
-    assert movie.provider == "tmdb"
+    assert movies[0]["id"] == 2108
+    assert provider.poster_url("/poster.jpg") == "https://image.tmdb.org/t/p/w500/poster.jpg"
 
 
-def test_movie_recommendation_service_searches_tmdb_with_original_title():
+def test_rank_tmdb_candidates_scores_by_story_keywords():
+    plan = MovieRecommendationPlan(
+        queries=["coming of age apartment"],
+        keywords=["coming", "apartment", "growth"],
+        mood="warm",
+        reason_template="성장 서사가 유사합니다.",
+    )
+    candidates = [
+        {"id": 1, "title": "Space War", "overview": "A battle in space.", "poster_path": "/a.jpg", "popularity": 90},
+        {
+            "id": 2,
+            "title": "First Room",
+            "overview": "A coming of age story about growth in a small apartment.",
+            "poster_path": "/b.jpg",
+            "popularity": 20,
+        },
+    ]
+
+    ranked = rank_tmdb_candidates(candidates, plan)
+
+    assert ranked[0]["id"] == 2
+    assert ranked[0]["_similarity_score"] > ranked[1]["_similarity_score"]
+
+
+def test_movie_recommendation_service_searches_with_movie_context_and_stores_results():
     class FakeProvider:
-        def search_movie(self, title: str):
-            assert title == "The Breakfast Club"
-            return None
+        def __init__(self) -> None:
+            self.queries: list[str] = []
 
-    service = MovieRecommendationService(metadata_provider=FakeProvider())
+        def search_movies(self, query: str, *, limit: int = 6):
+            self.queries.append(query)
+            return [
+                {
+                    "id": 2108,
+                    "title": "The Breakfast Club",
+                    "overview": "A coming of age story about growth and fear.",
+                    "poster_path": "/poster.jpg",
+                    "popularity": 30,
+                }
+            ]
 
-    movies = service.recommend_by_genre("하이틴", limit=1)
+        def poster_url(self, poster_path: str | None) -> str:
+            return f"https://image.tmdb.org/t/p/w500/{poster_path.lstrip('/')}" if poster_path else ""
 
-    assert movies[0].title == "브렉퍼스트 클럽"
-    assert movies[0].provider == "fallback"
+    class FakeRepository:
+        def __init__(self) -> None:
+            self.stored: list[MovieRecommendation] = []
+
+        def list_by_movie_id(self, movie_id: int):
+            return self.stored
+
+        def replace_for_movie(self, *, movie_id: int, recommendations):
+            self.stored = recommendations
+            return recommendations
+
+    provider = FakeProvider()
+    repository = FakeRepository()
+    service = MovieRecommendationService(
+        metadata_provider=provider,
+        planner=HeuristicRecommendationPlanner(),
+        recommendation_repository=repository,
+    )
+
+    recommendations = service.get_or_create_for_movie(movie=sample_movie(), genre="하이틴")
+
+    assert provider.queries
+    assert recommendations[0].provider == "tmdb"
+    assert recommendations[0].external_url == "https://www.themoviedb.org/movie/2108"
+    assert repository.stored[0].title == "The Breakfast Club"
+    assert repository.stored[0].metadata_json["score"] > 0
 
 
-def test_build_movie_recommendation_service_uses_tmdb_when_token_exists():
-    service = build_movie_recommendation_service(Settings(tmdb_access_token="test-token"))
+def test_build_movie_recommendation_service_uses_openai_planner_when_key_exists():
+    service = build_movie_recommendation_service(
+        Settings(tmdb_access_token="tmdb-token", openai_api_key="openai-key")
+    )
 
     assert service.metadata_provider is not None
+    assert isinstance(service.planner, OpenAIRecommendationPlanner)
 
 
 def test_movie_recommendation_service_returns_stored_recommendations_first():
@@ -94,6 +177,7 @@ def test_movie_recommendation_service_returns_stored_recommendations_first():
                     poster_url="https://image.tmdb.org/t/p/w500/poster.jpg",
                     external_url="https://www.themoviedb.org/movie/2108",
                     rank=1,
+                    metadata_json={"score": 3.5},
                 )
             ]
 
@@ -102,7 +186,8 @@ def test_movie_recommendation_service_returns_stored_recommendations_first():
 
     service = MovieRecommendationService(recommendation_repository=FakeRepository())
 
-    recommendations = service.get_or_create_for_movie(movie_id=1, genre="하이틴")
+    recommendations = service.get_or_create_for_movie(movie=sample_movie(), genre="하이틴")
 
     assert recommendations[0].title == "저장된 추천"
     assert recommendations[0].provider == "tmdb"
+    assert recommendations[0].score == 3.5

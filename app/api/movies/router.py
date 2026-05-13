@@ -401,7 +401,7 @@ async def get_similar_movies(
     return schemas.SimilarMoviesResponse(
         movie_id=movie.id,
         similar_movies=build_similar_movies(
-            movie_id=movie.id,
+            movie=movie,
             genre=genre,
             recommendation_repo=recommendation_repo,
         ),
@@ -539,7 +539,7 @@ def build_movie_detail(
         thumbnail_url=summary.thumbnail_url,
         ost=build_movie_ost(movie),
         similar_movies=build_similar_movies(
-            movie_id=movie.id,
+            movie=movie,
             genre=summary.genre,
             recommendation_repo=recommendation_repo,
         ),
@@ -591,7 +591,7 @@ def build_movie_ost(movie: Movie) -> list[schemas.OstTrack]:
 
 def build_similar_movies(
     *,
-    movie_id: int,
+    movie: Movie,
     genre: str,
     recommendation_repo: SQLAlchemyMovieRecommendationRepository | None = None,
 ) -> list[schemas.SimilarMovie]:
@@ -605,5 +605,5 @@ def build_similar_movies(
             external_url=movie.external_url,
             provider=movie.provider,
         )
-        for movie in service.get_or_create_for_movie(movie_id=movie_id, genre=genre)
+        for movie in service.get_or_create_for_movie(movie=movie, genre=genre)
     ]
