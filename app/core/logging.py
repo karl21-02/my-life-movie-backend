@@ -94,6 +94,8 @@ def configure_logging(settings: Settings | None = None) -> None:
     root_logger.addHandler(handler)
 
     logging.getLogger("uvicorn.access").disabled = True
+    for logger_name in ("openai", "httpx", "httpcore"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> logging.Logger:
