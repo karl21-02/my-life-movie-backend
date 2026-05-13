@@ -151,9 +151,10 @@ S3_PRESIGNED_URL_EXPIRE_SECONDS=900
 
 ### 비슷한 영화 추천
 
-기본값은 테마별 fallback 추천입니다. 실제 영화 포스터와 TMDB 상세 링크를 사용하려면 TMDB Read Access Token을 설정합니다. 토큰이 없거나 TMDB 호출이 실패하면 fallback 추천을 반환합니다.
+비슷한 영화 추천은 OpenAI가 사용자 스토리 기반으로 실존 영화 후보와 TMDB 검색 계획을 만들고, TMDB에서 포스터와 상세 링크를 검증한 뒤 `movie_recommendations` 테이블에 저장합니다. `OPENAI_API_KEY` 또는 `TMDB_ACCESS_TOKEN`이 없거나 외부 호출이 실패하면 가짜 추천을 만들지 않고 빈 추천 목록을 반환합니다.
 
 ```env
+OPENAI_API_KEY=your-openai-api-key
 TMDB_ACCESS_TOKEN=your-tmdb-read-access-token
 TMDB_API_BASE_URL=https://api.themoviedb.org/3
 TMDB_IMAGE_BASE_URL=https://image.tmdb.org/t/p

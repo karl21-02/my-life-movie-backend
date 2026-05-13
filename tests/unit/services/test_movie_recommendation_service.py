@@ -5,12 +5,12 @@ from app.core.config import Settings
 from app.models.movie import Movie, MovieStatus
 from app.models.movie_recommendation import MovieRecommendation
 from app.services.movie_recommendation_service import (
-    HeuristicRecommendationPlanner,
     MovieRecommendationPlan,
     MovieRecommendationService,
     OpenAIRecommendationPlanner,
     TMDBMovieMetadataProvider,
     build_movie_recommendation_service,
+    parse_recommendation_plan,
     rank_tmdb_candidates,
 )
 
@@ -42,6 +42,18 @@ def sample_movie() -> Movie:
 
 def test_movie_recommendation_service_returns_empty_without_tmdb_provider():
     service = MovieRecommendationService()
+
+    movies = service.recommend_for_movie(sample_movie(), "하이틴")
+
+    assert movies == []
+
+
+def test_movie_recommendation_service_returns_empty_without_planner():
+    class FakeProvider:
+        def search_movies(self, query: str, *, limit: int = 6):
+            raise AssertionError("추천 계획이 없으면 TMDB를 호출하지 않아야 합니다.")
+
+    service = MovieRecommendationService(metadata_provider=FakeProvider())
 
     movies = service.recommend_for_movie(sample_movie(), "하이틴")
 
@@ -85,6 +97,7 @@ def test_tmdb_movie_metadata_provider_returns_search_results():
 
 def test_rank_tmdb_candidates_scores_by_story_keywords():
     plan = MovieRecommendationPlan(
+        movie_titles=["Lady Bird"],
         queries=["coming of age apartment"],
         keywords=["coming", "apartment", "growth"],
         mood="warm",
@@ -108,6 +121,16 @@ def test_rank_tmdb_candidates_scores_by_story_keywords():
 
 
 def test_movie_recommendation_service_searches_with_movie_context_and_stores_results():
+    class FakePlanner:
+        def build_plan(self, movie: Movie, genre: str):
+            return MovieRecommendationPlan(
+                movie_titles=["The Breakfast Club"],
+                queries=["coming of age first apartment"],
+                keywords=["coming of age", "growth", "fear"],
+                mood="warm",
+                reason_template="성장 서사가 유사합니다.",
+            )
+
     class FakeProvider:
         def __init__(self) -> None:
             self.queries: list[str] = []
@@ -142,7 +165,7 @@ def test_movie_recommendation_service_searches_with_movie_context_and_stores_res
     repository = FakeRepository()
     service = MovieRecommendationService(
         metadata_provider=provider,
-        planner=HeuristicRecommendationPlanner(),
+        planner=FakePlanner(),
         recommendation_repository=repository,
     )
 
@@ -153,6 +176,27 @@ def test_movie_recommendation_service_searches_with_movie_context_and_stores_res
     assert recommendations[0].external_url == "https://www.themoviedb.org/movie/2108"
     assert repository.stored[0].title == "The Breakfast Club"
     assert repository.stored[0].metadata_json["score"] > 0
+
+
+def test_movie_recommendation_service_does_not_use_static_fallback_when_planner_fails():
+    class FailingPlanner:
+        def build_plan(self, movie: Movie, genre: str):
+            raise RuntimeError("openai failed")
+
+    class FakeProvider:
+        def search_movies(self, query: str, *, limit: int = 6):
+            raise AssertionError("추천 계획이 실패하면 TMDB를 호출하지 않아야 합니다.")
+
+    service = MovieRecommendationService(metadata_provider=FakeProvider(), planner=FailingPlanner())
+
+    recommendations = service.recommend_for_movie(sample_movie(), "하이틴")
+
+    assert recommendations == []
+
+
+def test_parse_recommendation_plan_requires_queries_and_keywords():
+    with pytest.raises(ValueError):
+        parse_recommendation_plan({"movie_titles": [], "queries": [], "keywords": []}, sample_movie(), "하이틴")
 
 
 def test_build_movie_recommendation_service_uses_openai_planner_when_key_exists():

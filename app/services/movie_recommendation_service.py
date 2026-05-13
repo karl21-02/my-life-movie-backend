@@ -7,13 +7,17 @@ import httpx
 from openai import OpenAI
 
 from app.core.config import Settings
+from app.core.logging import get_logger
 from app.models.movie import Movie
 from app.models.movie_recommendation import MovieRecommendation
 from app.repositories.movie_recommendation_repository import MovieRecommendationRepository
 
+logger = get_logger(__name__)
+
 
 @dataclass(frozen=True)
 class MovieRecommendationPlan:
+    movie_titles: list[str]
     queries: list[str]
     keywords: list[str]
     mood: str
@@ -58,9 +62,13 @@ class OpenAIRecommendationPlanner:
                 {
                     "role": "system",
                     "content": (
-                        "당신은 영화 추천 검색 전략가입니다. 사용자의 인생 영화 입력을 바탕으로 "
-                        "TMDB 검색에 적합한 영어 검색 쿼리와 유사도 키워드를 JSON으로만 반환하세요. "
-                        "실존 영화 제목을 억지로 만들지 말고, 장르/감정/서사/시각 분위기를 검색 가능한 표현으로 바꾸세요."
+                        "You are a movie recommendation search strategist. Return JSON only with this exact schema: "
+                        '{"movie_titles":["real existing movie title"],"queries":["english tmdb search query"],'
+                        '"keywords":["english similarity keyword"],'
+                        '"mood":"english mood","reason_template":"Korean one sentence reason"}. '
+                        "Use the user's life story, genre, emotions, scenes, and visual style. "
+                        "movie_titles must contain real existing films that are thematically similar. "
+                        "queries must be 3 to 5 short TMDB search queries. Do not invent fake movie titles."
                     ),
                 },
                 {
@@ -73,27 +81,6 @@ class OpenAIRecommendationPlanner:
         )
         content = response.choices[0].message.content or "{}"
         return parse_recommendation_plan(json.loads(content), movie, genre)
-
-
-class HeuristicRecommendationPlanner:
-    def build_plan(self, movie: Movie, genre: str) -> MovieRecommendationPlan:
-        context = build_movie_recommendation_context(movie, genre)
-        keyword_candidates = [
-            genre,
-            *as_text_list(context["story"].get("emotions")),
-            *as_text_list(context["story"].get("locations")),
-            normalize_text(context["story"].get("visual_style")),
-            normalize_text(context["story"].get("ending_tone")),
-            normalize_text(context.get("summary")),
-        ]
-        keywords = [keyword for keyword in keyword_candidates if keyword][:8]
-        query = " ".join(keywords[:5]) or genre or "emotional life drama"
-        return MovieRecommendationPlan(
-            queries=[query, f"{genre} emotional drama".strip()],
-            keywords=keywords,
-            mood=normalize_text(context["story"].get("ending_tone")) or genre,
-            reason_template="스토리 분위기와 감정선이 유사합니다.",
-        )
 
 
 class TMDBMovieMetadataProvider:
@@ -150,20 +137,36 @@ class MovieRecommendationService:
         recommendation_repository: MovieRecommendationRepository | None = None,
     ) -> None:
         self.metadata_provider = metadata_provider
-        self.planner = planner or HeuristicRecommendationPlanner()
+        self.planner = planner
         self.recommendation_repository = recommendation_repository
 
     def recommend_for_movie(self, movie: Movie, genre: str, *, limit: int = 4) -> list[RecommendedMovie]:
-        if self.metadata_provider is None:
+        if self.metadata_provider is None or self.planner is None:
             return []
 
-        plan = self.planner.build_plan(movie, genre)
-        candidates = self.collect_tmdb_candidates(plan.queries)
+        plan = self.build_plan(movie, genre)
+        if plan is None:
+            return []
+        candidates = self.collect_tmdb_candidates(build_tmdb_search_queries(plan))
         ranked_movies = rank_tmdb_candidates(candidates, plan)
         return [
             build_recommended_movie(candidate, self.metadata_provider, plan)
             for candidate in ranked_movies[:limit]
         ]
+
+    def build_plan(self, movie: Movie, genre: str) -> MovieRecommendationPlan | None:
+        try:
+            return self.planner.build_plan(movie, genre)
+        except Exception as exc:
+            logger.warning(
+                "추천 검색 계획 생성에 실패했습니다.",
+                extra={
+                    "event": "movie_recommendation_plan_failed",
+                    "movie_id": movie.id,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            return None
 
     def collect_tmdb_candidates(self, queries: list[str]) -> list[dict]:
         seen_ids: set[int] = set()
@@ -171,13 +174,21 @@ class MovieRecommendationService:
         for query in queries:
             try:
                 results = self.metadata_provider.search_movies(query, limit=8) if self.metadata_provider else []
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "TMDB 추천 후보 검색에 실패했습니다.",
+                    extra={
+                        "event": "movie_recommendation_tmdb_search_failed",
+                        "query": query,
+                        "error_type": type(exc).__name__,
+                    },
+                )
                 results = []
             for result in results:
                 movie_id = result.get("id")
                 if isinstance(movie_id, int) and movie_id not in seen_ids:
                     seen_ids.add(movie_id)
-                    candidates.append(result)
+                    candidates.append({**result, "_recommendation_query": query})
         return candidates
 
     def get_or_create_for_movie(
@@ -249,14 +260,17 @@ def build_movie_recommendation_context(movie: Movie, genre: str) -> dict[str, An
 
 
 def parse_recommendation_plan(data: dict[str, Any], movie: Movie, genre: str) -> MovieRecommendationPlan:
-    heuristic = HeuristicRecommendationPlanner().build_plan(movie, genre)
-    queries = [normalize_text(query) for query in data.get("queries", []) if normalize_text(query)]
-    keywords = [normalize_text(keyword) for keyword in data.get("keywords", []) if normalize_text(keyword)]
+    movie_titles = dedupe_texts([normalize_text(title) for title in read_text_array(data, "movie_titles")])
+    queries = dedupe_texts([normalize_text(query) for query in read_text_array(data, "queries")])
+    keywords = dedupe_texts([normalize_text(keyword) for keyword in read_text_array(data, "keywords")])
+    if not movie_titles or not queries or not keywords:
+        raise ValueError("추천 검색 계획에 movie_titles, queries, keywords가 필요합니다.")
     return MovieRecommendationPlan(
-        queries=(queries or heuristic.queries)[:5],
-        keywords=(keywords or heuristic.keywords)[:12],
-        mood=normalize_text(data.get("mood")) or heuristic.mood,
-        reason_template=normalize_text(data.get("reason_template")) or heuristic.reason_template,
+        movie_titles=movie_titles[:8],
+        queries=queries[:5],
+        keywords=keywords[:12],
+        mood=normalize_text(data.get("mood")) or genre,
+        reason_template=normalize_text(data.get("reason_template")) or "스토리 분위기와 감정선이 유사합니다.",
     )
 
 
@@ -273,6 +287,10 @@ def rank_tmdb_candidates(candidates: list[dict], plan: MovieRecommendationPlan) 
     ]
 
 
+def build_tmdb_search_queries(plan: MovieRecommendationPlan) -> list[str]:
+    return dedupe_texts([*plan.movie_titles, *plan.queries, *plan.keywords[:5]])[:12]
+
+
 def score_tmdb_candidate(candidate: dict, plan: MovieRecommendationPlan) -> float:
     searchable_text = normalize_text(
         " ".join(
@@ -284,6 +302,14 @@ def score_tmdb_candidate(candidate: dict, plan: MovieRecommendationPlan) -> floa
         )
     ).lower()
     score = 0.0
+    source_query = normalize_text(candidate.get("_recommendation_query")).lower()
+    if source_query in {title.lower() for title in plan.movie_titles}:
+        candidate_titles = {
+            normalize_text(candidate.get("title")).lower(),
+            normalize_text(candidate.get("original_title")).lower(),
+        }
+        if source_query in candidate_titles:
+            score += 6.0
     for keyword in plan.keywords:
         normalized_keyword = keyword.lower()
         if normalized_keyword and normalized_keyword in searchable_text:
@@ -374,3 +400,21 @@ def as_text_list(value: Any) -> list[str]:
         return [normalize_text(item) for item in value if normalize_text(item)]
     text = normalize_text(value)
     return [text] if text else []
+
+
+def read_text_array(data: dict[str, Any], key: str) -> list[str]:
+    value = data.get(key)
+    if not isinstance(value, list):
+        return []
+    return [normalize_text(item) for item in value if normalize_text(item)]
+
+
+def dedupe_texts(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        normalized = normalize_text(value)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+    return result
