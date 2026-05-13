@@ -37,6 +37,9 @@ def test_alembic_upgrade_head_creates_auth_tables(tmp_path, monkeypatch):
             "user_id",
             "theme_id",
             "status",
+            "story_brief",
+            "scene_plan",
+            "generation_prompt",
         }
 
         with engine.connect() as connection:
