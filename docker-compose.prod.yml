@@ -54,9 +54,29 @@ services:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
     depends_on:
       - my-life-movie-prometheus
+      - my-life-movie-loki
+    restart: unless-stopped
+
+  my-life-movie-loki:
+    image: grafana/loki:2.9.3
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - ./loki-config.yml:/etc/loki/loki-config.yaml:ro
+      - my-life-movie-loki-data:/loki
+    restart: unless-stopped
+
+  my-life-movie-promtail:
+    image: grafana/promtail:2.9.3
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - my-life-movie-loki
     restart: unless-stopped
 
 volumes:
   my-life-movie-redis-data:
   my-life-movie-prometheus-data:
   my-life-movie-grafana-data:
+  my-life-movie-loki-data:
