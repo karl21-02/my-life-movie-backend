@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from sqlalchemy.orm.exc import StaleDataError
+
 from app.core.errors import AppError
 from app.models.movie import MovieStatus
 from app.models.video_generation_job import VideoGenerationJob, VideoGenerationJobStatus
@@ -73,7 +75,7 @@ class VideoGenerationService:
         job.progress = max(job.progress, 1)
         job.provider_job_id = provider_job_id
         job.started_at = now_utc()
-        return self.job_repository.update(job)
+        return self._update_job(job)
 
     def mark_generation_succeeded(
         self,
@@ -93,7 +95,7 @@ class VideoGenerationService:
         job.output_url = output_url
         job.thumbnail_url = thumbnail_url
         job.completed_at = now_utc()
-        self.job_repository.update(job)
+        self._update_job(job)
 
         movie = self.movie_repository.get_by_id(job.movie_id)
         if movie is not None:
@@ -118,7 +120,7 @@ class VideoGenerationService:
         job.error_code = error_code
         job.error_message = error_message
         job.completed_at = now_utc()
-        self.job_repository.update(job)
+        self._update_job(job)
 
         movie = self.movie_repository.get_by_id(job.movie_id)
         if movie is not None:
@@ -139,7 +141,7 @@ class VideoGenerationService:
 
         job.status = VideoGenerationJobStatus.CANCELED
         job.completed_at = now_utc()
-        self.job_repository.update(job)
+        self._update_job(job)
 
         movie.status = MovieStatus.DRAFT
         self.movie_repository.update(movie)
@@ -150,6 +152,12 @@ class VideoGenerationService:
         if job is None:
             raise generation_job_not_found_error()
         return job
+
+    def _update_job(self, job: VideoGenerationJob) -> VideoGenerationJob:
+        try:
+            return self.job_repository.update(job)
+        except StaleDataError as exc:
+            raise generation_job_state_conflict_error() from exc
 
     def _ensure_status(
         self,
@@ -208,6 +216,16 @@ def generation_job_not_found_error() -> AppError:
         title="Generation Job Not Found",
         detail="영상 생성 작업을 찾을 수 없습니다.",
         type_="generation_job_not_found",
+    )
+
+
+def generation_job_state_conflict_error() -> AppError:
+    return AppError(
+        status_code=409,
+        code="GENERATION_JOB_STATE_CONFLICT",
+        title="Generation Job State Conflict",
+        detail="영상 생성 작업 상태가 이미 변경되어 현재 결과를 반영할 수 없습니다.",
+        type_="generation_job_state_conflict",
     )
 
 

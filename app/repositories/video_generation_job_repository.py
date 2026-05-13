@@ -1,6 +1,7 @@
 from typing import Protocol
 
 from sqlalchemy import select
+from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.orm import Session
 
 from app.models.video_generation_job import VideoGenerationJob, VideoGenerationJobStatus
@@ -67,7 +68,7 @@ class SQLAlchemyVideoGenerationJobRepository:
         return job
 
     def get_by_id(self, job_id: int) -> VideoGenerationJob | None:
-        return self.session.get(VideoGenerationJob, job_id)
+        return self.session.get(VideoGenerationJob, job_id, populate_existing=True)
 
     def get_latest_by_movie_id(self, movie_id: int) -> VideoGenerationJob | None:
         return self.session.scalar(
@@ -115,6 +116,10 @@ class SQLAlchemyVideoGenerationJobRepository:
         )
 
     def update(self, job: VideoGenerationJob) -> VideoGenerationJob:
-        self.session.commit()
+        try:
+            self.session.commit()
+        except StaleDataError:
+            self.session.rollback()
+            raise
         self.session.refresh(job)
         return job

@@ -1,7 +1,9 @@
 import pytest
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.models.movie import MovieStatus
+from app.models.video_generation_job import VideoGenerationJob
 from app.models.video_generation_job import VideoGenerationJobStatus
 from app.repositories.movie_repository import SQLAlchemyMovieRepository
 from app.repositories.video_generation_job_repository import SQLAlchemyVideoGenerationJobRepository
@@ -26,6 +28,25 @@ class SuccessProvider:
 class FailingProvider:
     def generate(self, input_snapshot: dict) -> VideoGenerationProviderResult:
         raise RuntimeError("provider timeout")
+
+
+class DeletingProvider:
+    def __init__(self, db_session: Session, job_id: int) -> None:
+        self.db_session = db_session
+        self.job_id = job_id
+
+    def generate(self, input_snapshot: dict) -> VideoGenerationProviderResult:
+        self.db_session.execute(
+            delete(VideoGenerationJob)
+            .where(VideoGenerationJob.id == self.job_id)
+            .execution_options(synchronize_session=False)
+        )
+        self.db_session.commit()
+        return VideoGenerationProviderResult(
+            provider_job_id="provider-job-1",
+            output_url="https://cdn.example.com/movie.mp4",
+            thumbnail_url="https://cdn.example.com/movie.jpg",
+        )
 
 
 def create_service(db_session: Session) -> VideoGenerationService:
@@ -117,3 +138,17 @@ def test_worker_run_next_returns_none_when_queue_is_empty(db_session: Session):
     )
 
     assert worker.run_next() is None
+
+
+def test_worker_run_skips_when_job_is_removed_during_provider_execution(db_session: Session):
+    user, movie = create_ready_movie(db_session)
+    generation_service = create_service(db_session)
+    created = generation_service.request_generation(movie_id=movie.id, user_id=user.id)
+    worker = VideoGenerationWorkerService(
+        generation_service=generation_service,
+        provider=DeletingProvider(db_session, created.job.id),
+    )
+
+    result = worker.run(job_id=created.job.id)
+
+    assert result is None
