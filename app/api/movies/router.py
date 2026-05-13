@@ -3,10 +3,12 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from sqlalchemy.orm import Session
 
-from app.api.movies import schemas, service
+from app.api.movies import schemas
 from app.core.config import get_settings
 from app.core.deps import get_current_user
 from app.db.session import get_db_session
+from app.models.movie import Movie
+from app.models.video_generation_job import VideoGenerationJob
 from app.repositories.movie_repository import SQLAlchemyMovieRepository
 from app.repositories.video_generation_job_repository import SQLAlchemyVideoGenerationJobRepository
 from app.schemas.movie import (
@@ -28,6 +30,14 @@ router = APIRouter(prefix="/api/movies", tags=["movies"])
 
 # 파일 업로드 시 허용되는 확장자 목록 (소문자 기준)
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf", ".txt", ".mp4", ".mov"}
+THEME_NAMES = {
+    1: "하이틴",
+    2: "사이버펑크",
+    3: "무성영화",
+    4: "동화",
+    5: "재패니즈 노스탤지아",
+    6: "지브리",
+}
 
 # 영화 조회 시 존재 여부와 소유자 권한을 확인하는 헬퍼 함수
 def _get_movie_or_403(repo: SQLAlchemyMovieRepository, movie_id: int, user_id: int):
@@ -241,43 +251,163 @@ async def cancel_generation(
 
 
 @router.get("", response_model=list[schemas.MovieSummary])
-async def get_movies() -> list[schemas.MovieSummary]:
-    """영화 목록을 반환한다."""
-    return service.list_movies()
+async def get_movies(
+    db: Session = Depends(get_db_session),
+    current_user: AccessTokenClaims = Depends(get_current_user),
+) -> list[schemas.MovieSummary]:
+    """현재 사용자의 실제 영화 목록을 반환합니다."""
+    movie_repo = SQLAlchemyMovieRepository(db)
+    job_repo = SQLAlchemyVideoGenerationJobRepository(db)
+    movies = movie_repo.list_by_user_id(current_user.user_id)
+    latest_jobs = job_repo.list_latest_by_movie_ids([movie.id for movie in movies])
+    return [
+        build_movie_summary(movie, latest_jobs.get(movie.id))
+        for movie in movies
+    ]
 
 
 @router.get("/{movie_id}", response_model=schemas.Movie)
-async def get_movie(movie_id: int) -> schemas.Movie:
-    """특정 영화의 상세 정보를 반환한다."""
-    return service.get_movie(movie_id)
+async def get_movie(
+    movie_id: int,
+    db: Session = Depends(get_db_session),
+    current_user: AccessTokenClaims = Depends(get_current_user),
+) -> schemas.Movie:
+    """현재 사용자의 특정 영화 상세 정보를 반환합니다."""
+    movie_repo = SQLAlchemyMovieRepository(db)
+    job_repo = SQLAlchemyVideoGenerationJobRepository(db)
+    movie = _get_movie_or_403(movie_repo, movie_id, current_user.user_id)
+    return build_movie_detail(movie, job_repo.get_latest_by_movie_id(movie.id))
 
 
 @router.delete("/{movie_id}", response_model=schemas.DeleteMovieResponse)
-async def delete_movie(movie_id: int) -> schemas.DeleteMovieResponse:
-    """특정 영화를 삭제한다."""
-    service.delete_movie(movie_id)
+async def delete_movie(
+    movie_id: int,
+    db: Session = Depends(get_db_session),
+    current_user: AccessTokenClaims = Depends(get_current_user),
+) -> schemas.DeleteMovieResponse:
+    """현재 사용자의 특정 영화를 삭제합니다."""
+    movie_repo = SQLAlchemyMovieRepository(db)
+    movie = _get_movie_or_403(movie_repo, movie_id, current_user.user_id)
+    movie_repo.delete(movie)
     return schemas.DeleteMovieResponse(message="영화가 삭제되었습니다.")
 
 
 @router.get("/{movie_id}/download", response_model=schemas.DownloadMovieResponse)
-async def download_movie(movie_id: int) -> schemas.DownloadMovieResponse:
-    """특정 영화의 다운로드 정보를 반환한다."""
-    movie = service.download_movie(movie_id)
+async def download_movie(
+    movie_id: int,
+    db: Session = Depends(get_db_session),
+    current_user: AccessTokenClaims = Depends(get_current_user),
+) -> schemas.DownloadMovieResponse:
+    """현재 사용자의 특정 영화 다운로드 정보를 반환합니다."""
+    movie_repo = SQLAlchemyMovieRepository(db)
+    job_repo = SQLAlchemyVideoGenerationJobRepository(db)
+    movie = _get_movie_or_403(movie_repo, movie_id, current_user.user_id)
+    latest_job = job_repo.get_latest_by_movie_id(movie.id)
+    title = build_movie_title(movie)
     return schemas.DownloadMovieResponse(
-        message=f"{movie.title} 다운로드가 준비되었습니다.",
+        message=f"{title} 다운로드가 준비되었습니다.",
         movie_id=movie.id,
-        title=movie.title,
+        title=title,
+        output_url=latest_job.output_url if latest_job is not None else None,
     )
 
 
 @router.post("/{movie_id}/share", response_model=schemas.ShareMovieResponse)
-async def share_movie(movie_id: int, request: Request) -> schemas.ShareMovieResponse:
-    """특정 영화의 공유 URL을 생성하여 반환한다."""
+async def share_movie(
+    movie_id: int,
+    request: Request,
+    db: Session = Depends(get_db_session),
+    current_user: AccessTokenClaims = Depends(get_current_user),
+) -> schemas.ShareMovieResponse:
+    """현재 사용자의 특정 영화 공유 URL을 생성하여 반환합니다."""
+    movie_repo = SQLAlchemyMovieRepository(db)
+    movie = _get_movie_or_403(movie_repo, movie_id, current_user.user_id)
     base_url = str(request.base_url).rstrip("/")
-    movie, share_url = service.share_movie(movie_id, base_url)
+    title = build_movie_title(movie)
+    share_url = f"{base_url}/movies/{movie_id}"
     return schemas.ShareMovieResponse(
-        message=f"{movie.title} 공유 링크가 생성되었습니다.",
+        message=f"{title} 공유 링크가 생성되었습니다.",
         movie_id=movie.id,
-        title=movie.title,
+        title=title,
         share_url=share_url,
     )
+
+
+def build_movie_summary(
+    movie: Movie,
+    latest_job: VideoGenerationJob | None,
+) -> schemas.MovieSummary:
+    thumbnail_url = latest_job.thumbnail_url if latest_job is not None else None
+    output_url = latest_job.output_url if latest_job is not None else None
+    return schemas.MovieSummary(
+        id=movie.id,
+        title=build_movie_title(movie),
+        thumbnail=thumbnail_url or "",
+        genre=THEME_NAMES.get(movie.theme_id, "인생 영화"),
+        status=movie.status.value,
+        output_url=output_url,
+        thumbnail_url=thumbnail_url,
+    )
+
+
+def build_movie_detail(
+    movie: Movie,
+    latest_job: VideoGenerationJob | None,
+) -> schemas.Movie:
+    summary = build_movie_summary(movie, latest_job)
+    return schemas.Movie(
+        id=summary.id,
+        title=summary.title,
+        description=build_movie_description(movie),
+        thumbnail=summary.thumbnail,
+        genre=summary.genre,
+        sentiment=build_movie_sentiment(movie),
+        status=summary.status,
+        output_url=summary.output_url,
+        thumbnail_url=summary.thumbnail_url,
+        ost=build_movie_ost(movie),
+        similar_movies=[],
+    )
+
+
+def build_movie_title(movie: Movie) -> str:
+    story_brief = movie.story_brief if isinstance(movie.story_brief, dict) else {}
+    for key in ("title", "movie_title"):
+        value = story_brief.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    if movie.current_draft:
+        first_line = movie.current_draft.strip().splitlines()[0]
+        if first_line:
+            return first_line[:40]
+
+    return f"내 인생 영화 #{movie.id}"
+
+
+def build_movie_description(movie: Movie) -> str:
+    if movie.current_draft and movie.current_draft.strip():
+        return movie.current_draft.strip()
+    if movie.generation_prompt and movie.generation_prompt.strip():
+        return movie.generation_prompt.strip()
+    return "아직 영화 시나리오를 준비 중입니다."
+
+
+def build_movie_sentiment(movie: Movie) -> str:
+    story_brief = movie.story_brief if isinstance(movie.story_brief, dict) else {}
+    for key in ("core_emotion", "emotion", "mood", "tone"):
+        value = story_brief.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "기록중"
+
+
+def build_movie_ost(movie: Movie) -> list[schemas.OstTrack]:
+    if movie.music_id is None:
+        return []
+    return [
+        schemas.OstTrack(
+            title=f"선택한 음악 #{movie.music_id}",
+            artist="My Life Movie",
+        )
+    ]

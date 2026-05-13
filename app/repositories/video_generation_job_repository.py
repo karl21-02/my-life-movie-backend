@@ -28,6 +28,9 @@ class VideoGenerationJobRepository(Protocol):
     def get_latest_by_movie_id(self, movie_id: int) -> VideoGenerationJob | None:
         ...
 
+    def list_latest_by_movie_ids(self, movie_ids: list[int]) -> dict[int, VideoGenerationJob]:
+        ...
+
     def get_in_progress_by_movie_id(self, movie_id: int) -> VideoGenerationJob | None:
         ...
 
@@ -73,6 +76,24 @@ class SQLAlchemyVideoGenerationJobRepository:
             .order_by(VideoGenerationJob.created_at.desc(), VideoGenerationJob.id.desc())
             .limit(1)
         )
+
+    def list_latest_by_movie_ids(self, movie_ids: list[int]) -> dict[int, VideoGenerationJob]:
+        if not movie_ids:
+            return {}
+
+        jobs = self.session.scalars(
+            select(VideoGenerationJob)
+            .where(VideoGenerationJob.movie_id.in_(movie_ids))
+            .order_by(
+                VideoGenerationJob.movie_id.asc(),
+                VideoGenerationJob.created_at.desc(),
+                VideoGenerationJob.id.desc(),
+            )
+        )
+        latest_jobs: dict[int, VideoGenerationJob] = {}
+        for job in jobs:
+            latest_jobs.setdefault(job.movie_id, job)
+        return latest_jobs
 
     def get_in_progress_by_movie_id(self, movie_id: int) -> VideoGenerationJob | None:
         return self.session.scalar(

@@ -6,9 +6,7 @@ services:
       context: .
       target: runtime
     command:
-      - uv
-      - run
-      - uvicorn
+      - /app/.venv/bin/uvicorn
       - app.main:app
       - --host
       - 0.0.0.0
@@ -18,13 +16,21 @@ services:
     environment:
       APP_ENV: local
       LOG_LEVEL: DEBUG
-      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,http://localhost:3002,http://127.0.0.1:3002
       DATABASE_URL: mysql+pymysql://${MYSQL_USER:-my_life_movie}:${MYSQL_PASSWORD:-my_life_movie_password}@my-life-movie-mysql:3306/${MYSQL_DATABASE:-my_life_movie}
       REDIS_URL: redis://my-life-movie-redis:6379/0
       REFRESH_TOKEN_STORE: redis
       REFRESH_TOKEN_REDIS_RETENTION_SECONDS: ${REFRESH_TOKEN_REDIS_RETENTION_SECONDS:-86400}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
+      SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
       VIDEO_GENERATION_PROVIDER: ${VIDEO_GENERATION_PROVIDER:-auto}
+      GENERATED_MEDIA_DIR: ${GENERATED_MEDIA_DIR:-generated}
+      OPENAI_VIDEO_MODEL: ${OPENAI_VIDEO_MODEL:-sora-2}
+      OPENAI_VIDEO_SIZE: ${OPENAI_VIDEO_SIZE:-1280x720}
+      OPENAI_VIDEO_SECONDS: ${OPENAI_VIDEO_SECONDS:-4}
+      OPENAI_VIDEO_POLL_INTERVAL_SECONDS: ${OPENAI_VIDEO_POLL_INTERVAL_SECONDS:-10}
+      OPENAI_VIDEO_MAX_WAIT_SECONDS: ${OPENAI_VIDEO_MAX_WAIT_SECONDS:-900}
       FAL_KEY: ${FAL_KEY:-}
       FAL_MODEL_ID: ${FAL_MODEL_ID:-fal-ai/wan-alpha}
       FAL_QUEUE_BASE_URL: ${FAL_QUEUE_BASE_URL:-https://queue.fal.run}
@@ -38,9 +44,7 @@ services:
     healthcheck:
       test:
         - CMD
-        - uv
-        - run
-        - python
+        - /app/.venv/bin/python
         - -c
         - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
       interval: 10s
@@ -58,9 +62,7 @@ services:
       context: .
       target: runtime
     command:
-      - uv
-      - run
-      - python
+      - /app/.venv/bin/python
       - -m
       - app.workers.video_generation_worker
     environment:
@@ -70,7 +72,14 @@ services:
       REDIS_URL: redis://my-life-movie-redis:6379/0
       REFRESH_TOKEN_STORE: redis
       REFRESH_TOKEN_REDIS_RETENTION_SECONDS: ${REFRESH_TOKEN_REDIS_RETENTION_SECONDS:-86400}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       VIDEO_GENERATION_PROVIDER: ${VIDEO_GENERATION_PROVIDER:-auto}
+      GENERATED_MEDIA_DIR: ${GENERATED_MEDIA_DIR:-generated}
+      OPENAI_VIDEO_MODEL: ${OPENAI_VIDEO_MODEL:-sora-2}
+      OPENAI_VIDEO_SIZE: ${OPENAI_VIDEO_SIZE:-1280x720}
+      OPENAI_VIDEO_SECONDS: ${OPENAI_VIDEO_SECONDS:-4}
+      OPENAI_VIDEO_POLL_INTERVAL_SECONDS: ${OPENAI_VIDEO_POLL_INTERVAL_SECONDS:-10}
+      OPENAI_VIDEO_MAX_WAIT_SECONDS: ${OPENAI_VIDEO_MAX_WAIT_SECONDS:-900}
       FAL_KEY: ${FAL_KEY:-}
       FAL_MODEL_ID: ${FAL_MODEL_ID:-fal-ai/wan-alpha}
       FAL_QUEUE_BASE_URL: ${FAL_QUEUE_BASE_URL:-https://queue.fal.run}

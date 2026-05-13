@@ -26,6 +26,12 @@ class Settings:
     spotify_client_secret: str = ""
     openai_api_key: str = ""
     video_generation_provider: str = "auto"
+    generated_media_dir: str = "generated"
+    openai_video_model: str = "sora-2"
+    openai_video_size: str = "1280x720"
+    openai_video_seconds: str = "4"
+    openai_video_poll_interval_seconds: float = 10
+    openai_video_max_wait_seconds: int = 900
     fal_key: str = ""
     fal_model_id: str = "fal-ai/wan-alpha"
     fal_queue_base_url: str = "https://queue.fal.run"
@@ -101,6 +107,18 @@ def get_settings() -> Settings:
         spotify_client_secret=os.getenv("SPOTIFY_CLIENT_SECRET", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         video_generation_provider=os.getenv("VIDEO_GENERATION_PROVIDER", "auto").strip().lower(),
+        generated_media_dir=os.getenv("GENERATED_MEDIA_DIR", "generated"),
+        openai_video_model=os.getenv("OPENAI_VIDEO_MODEL", "sora-2"),
+        openai_video_size=os.getenv("OPENAI_VIDEO_SIZE", "1280x720"),
+        openai_video_seconds=os.getenv("OPENAI_VIDEO_SECONDS", "4"),
+        openai_video_poll_interval_seconds=parse_float_env(
+            os.getenv("OPENAI_VIDEO_POLL_INTERVAL_SECONDS"),
+            10,
+        ),
+        openai_video_max_wait_seconds=parse_int_env(
+            os.getenv("OPENAI_VIDEO_MAX_WAIT_SECONDS"),
+            900,
+        ),
         fal_key=os.getenv("FAL_KEY", ""),
         fal_model_id=os.getenv("FAL_MODEL_ID", "fal-ai/wan-alpha"),
         fal_queue_base_url=os.getenv("FAL_QUEUE_BASE_URL", "https://queue.fal.run").rstrip("/"),

@@ -1,4 +1,5 @@
 import base64
+from hashlib import sha1
 
 import httpx
 from fastapi import APIRouter
@@ -79,15 +80,88 @@ async def _search_spotify_tracks(token: str, query: str) -> list[MusicTrack]:
             title=f"{item['name']} - {item['artists'][0]['name']}",
             file_url=item.get("preview_url") or "",
             is_ai_recommended=True,
+            artist=item["artists"][0]["name"],
+            provider="spotify",
+            provider_track_id=item["id"],
+            external_url=item.get("external_urls", {}).get("spotify"),
         )
         for i, item in enumerate(items)
     ]
 
 
-def _mock_recommend() -> MusicRecommendResponse:
+MOCK_RECOMMENDATION_CATALOG: dict[str, list[str]] = {
+    "calm": ["Quiet Memory", "Warm Letter", "Soft Morning"],
+    "bright": ["Golden Days", "Summer Smile", "Light Steps"],
+    "sad": ["Rainy Goodbye", "Blue Diary", "Last Scene"],
+    "romantic": ["First Heartbeat", "Love Montage", "Moonlit Promise"],
+    "dramatic": ["Turning Point", "Final Chapter", "Rising Frame"],
+}
+
+
+def _recommendation_mood(*values: str | None) -> str:
+    normalized = " ".join(value or "" for value in values).lower()
+    if any(keyword in normalized for keyword in ("잔잔", "차분", "따뜻", "평온", "calm", "soft", "warm")):
+        return "calm"
+    if any(keyword in normalized for keyword in ("밝", "신나", "희망", "여름", "bright", "happy", "summer")):
+        return "bright"
+    if any(keyword in normalized for keyword in ("슬픈", "이별", "눈물", "그리움", "sad", "rain", "blue")):
+        return "sad"
+    if any(keyword in normalized for keyword in ("사랑", "로맨스", "설렘", "첫사랑", "love", "romantic")):
+        return "romantic"
+    if any(keyword in normalized for keyword in ("웅장", "극적", "긴장", "반전", "dramatic", "epic")):
+        return "dramatic"
+    return "calm"
+
+
+def _stable_music_id(seed: str, index: int) -> int:
+    digest = sha1(f"{seed}:{index}".encode("utf-8")).hexdigest()
+    return 9000 + int(digest[:6], 16) % 900000
+
+
+def _recommendation_seed(request: MusicRecommendRequest) -> str:
+    return " ".join(
+        value.strip()
+        for value in (
+            request.message,
+            request.mood or "",
+            request.scene or "",
+            request.story_hint or "",
+            request.avoid or "",
+        )
+        if value and value.strip()
+    )
+
+
+def _spotify_query(request: MusicRecommendRequest) -> str:
+    parts = [
+        request.mood,
+        request.scene,
+        request.message,
+        request.story_hint,
+        "soundtrack instrumental",
+    ]
+    if request.avoid:
+        parts.append(f"not {request.avoid}")
+    return " ".join(part.strip() for part in parts if part and part.strip())
+
+
+def _mock_recommend(request: MusicRecommendRequest) -> MusicRecommendResponse:
+    seed = _recommendation_seed(request)
+    mood = _recommendation_mood(request.message, request.mood, request.scene, request.story_hint)
+    titles = MOCK_RECOMMENDATION_CATALOG[mood]
     return MusicRecommendResponse(
-        ai_message="말씀하신 분위기에 어울리는 곡을 찾아봤어요!",
-        tracks=[MusicTrack(music_id=999, title="AI 추천: Emotional Journey", file_url="", is_ai_recommended=True)],
+        ai_message="입력해주신 감정, 장면, 이야기 맥락을 반영해 추천곡을 골랐어요.",
+        tracks=[
+            MusicTrack(
+                music_id=_stable_music_id(seed, index),
+                title=f"AI 추천: {title}",
+                file_url="",
+                is_ai_recommended=True,
+                artist="My Life Movie AI",
+                provider="local",
+            )
+            for index, title in enumerate(titles)
+        ],
     )
 
 
@@ -95,26 +169,27 @@ def _mock_recommend() -> MusicRecommendResponse:
 async def recommend_music(request: MusicRecommendRequest):
     settings = get_settings()
     if not settings.spotify_client_id or not settings.spotify_client_secret:
-        return _mock_recommend()
+        return _mock_recommend(request)
     try:
         token = await _get_spotify_token(settings.spotify_client_id, settings.spotify_client_secret)
-        tracks = await _search_spotify_tracks(token, request.message)
+        query = _spotify_query(request)
+        tracks = await _search_spotify_tracks(token, query)
 
         if not tracks:
-            logger.info("spotify_empty_results", extra={"query": request.message})
+            logger.info("spotify_empty_results", extra={"query": query})
             tracks = await _search_spotify_tracks(token, f"{request.message} music")
 
         if not tracks:
-            logger.warning("spotify_no_results_after_retry", extra={"query": request.message})
-            return _mock_recommend()
+            logger.warning("spotify_no_results_after_retry", extra={"query": query})
+            return _mock_recommend(request)
 
         return MusicRecommendResponse(
-            ai_message=f"'{request.message}' 분위기에 어울리는 곡을 찾았어요!",
+            ai_message="입력해주신 감정, 장면, 이야기 맥락에 맞는 실제 음악을 찾았어요.",
             tracks=tracks,
         )
     except Exception as e:
         logger.warning("spotify_recommend_failed", extra={"error": str(e)})
         return MusicRecommendResponse(
             ai_message="음악을 불러오는 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.",
-            tracks=[MusicTrack(music_id=998, title="추천 로드 실패", file_url="", is_ai_recommended=True)],
+            tracks=_mock_recommend(request).tracks,
         )

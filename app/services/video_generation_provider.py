@@ -1,9 +1,12 @@
 from dataclasses import dataclass
 from hashlib import sha256
+from pathlib import Path
+import re
 import time
 from typing import Protocol
 
 import httpx
+from openai import OpenAI
 
 from app.core.config import Settings
 
@@ -115,6 +118,103 @@ class FalVideoGenerationProvider:
         return f"{self._model_url()}/requests/{request_id}/response"
 
 
+class OpenAIVideoGenerationProvider:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        size: str,
+        seconds: str,
+        poll_interval_seconds: float,
+        max_wait_seconds: int,
+        generated_media_dir: str,
+        client: OpenAI | None = None,
+    ) -> None:
+        if not api_key:
+            raise VideoGenerationProviderConfigError("OPENAI_API_KEY 환경 변수가 필요합니다.")
+
+        self.model = model
+        self.size = size
+        self.seconds = seconds
+        self.poll_interval_seconds = poll_interval_seconds
+        self.max_wait_seconds = max_wait_seconds
+        self.generated_media_dir = Path(generated_media_dir)
+        self.client = client or OpenAI(api_key=api_key)
+
+    def generate(self, input_snapshot: dict) -> VideoGenerationProviderResult:
+        prompt = build_openai_video_prompt(input_snapshot)
+        video = self.client.videos.create(
+            model=self.model,
+            prompt=prompt,
+            size=self.size,
+            seconds=self.seconds,
+        )
+        completed_video = self._wait_until_completed(video)
+        video_id = require_object_attr(completed_video, "id", "OpenAI 영상 응답에 id 값이 없습니다.")
+
+        video_path = self._download_variant(
+            video_id=video_id,
+            variant="video",
+            directory_name="videos",
+            extension="mp4",
+        )
+        thumbnail_path = self._download_thumbnail(video_id)
+        return VideoGenerationProviderResult(
+            provider_job_id=video_id,
+            output_url=to_generated_public_path(self.generated_media_dir, video_path),
+            thumbnail_url=(
+                to_generated_public_path(self.generated_media_dir, thumbnail_path)
+                if thumbnail_path is not None
+                else None
+            ),
+        )
+
+    def _wait_until_completed(self, video: object) -> object:
+        deadline = time.monotonic() + self.max_wait_seconds
+        current_video = video
+        while time.monotonic() <= deadline:
+            status = getattr(current_video, "status", None)
+            if status == "completed":
+                return current_video
+            if status == "failed":
+                raise VideoGenerationProviderError(openai_video_error_message(current_video))
+            if status not in {"queued", "in_progress"}:
+                raise VideoGenerationProviderError(f"OpenAI 영상 생성 상태를 처리할 수 없습니다: {status}")
+
+            time.sleep(self.poll_interval_seconds)
+            video_id = require_object_attr(current_video, "id", "OpenAI 영상 응답에 id 값이 없습니다.")
+            current_video = self.client.videos.retrieve(video_id)
+
+        raise VideoGenerationProviderTimeoutError("OpenAI 영상 생성 대기 시간이 초과되었습니다.")
+
+    def _download_thumbnail(self, video_id: str) -> Path | None:
+        try:
+            return self._download_variant(
+                video_id=video_id,
+                variant="thumbnail",
+                directory_name="thumbnails",
+                extension="webp",
+            )
+        except Exception:
+            return None
+
+    def _download_variant(
+        self,
+        *,
+        video_id: str,
+        variant: str,
+        directory_name: str,
+        extension: str,
+    ) -> Path:
+        output_dir = self.generated_media_dir / directory_name
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{safe_generated_filename(video_id)}.{extension}"
+        content = self.client.videos.download_content(video_id, variant=variant)
+        write_binary_response_to_file(content, output_path)
+        return output_path
+
+
 class VideoGenerationProviderError(RuntimeError):
     pass
 
@@ -133,7 +233,11 @@ def build_video_generation_provider(settings: Settings) -> VideoGenerationProvid
         return MockVideoGenerationProvider()
     if provider == "fal":
         return build_fal_video_generation_provider(settings)
+    if provider == "openai":
+        return build_openai_video_generation_provider(settings)
     if provider == "auto":
+        if settings.openai_api_key:
+            return build_openai_video_generation_provider(settings)
         if settings.fal_key:
             return build_fal_video_generation_provider(settings)
         return MockVideoGenerationProvider()
@@ -148,6 +252,18 @@ def build_fal_video_generation_provider(settings: Settings) -> FalVideoGeneratio
         queue_base_url=settings.fal_queue_base_url,
         poll_interval_seconds=settings.fal_poll_interval_seconds,
         max_wait_seconds=settings.fal_max_wait_seconds,
+    )
+
+
+def build_openai_video_generation_provider(settings: Settings) -> OpenAIVideoGenerationProvider:
+    return OpenAIVideoGenerationProvider(
+        api_key=settings.openai_api_key,
+        model=settings.openai_video_model,
+        size=settings.openai_video_size,
+        seconds=settings.openai_video_seconds,
+        poll_interval_seconds=settings.openai_video_poll_interval_seconds,
+        max_wait_seconds=settings.openai_video_max_wait_seconds,
+        generated_media_dir=settings.generated_media_dir,
     )
 
 
@@ -170,10 +286,24 @@ def build_fal_payload(input_snapshot: dict) -> dict:
     }
 
 
+def build_openai_video_prompt(input_snapshot: dict) -> str:
+    prompt = str(input_snapshot.get("provider_prompt") or "").strip()
+    if not prompt:
+        raise VideoGenerationProviderError("provider_prompt가 비어 있어 영상을 생성할 수 없습니다.")
+    return prompt
+
+
 def require_string(data: dict, key: str) -> str:
     value = data.get(key)
     if not isinstance(value, str) or not value:
         raise VideoGenerationProviderError(f"fal 응답에 {key} 값이 없습니다.")
+    return value
+
+
+def require_object_attr(target: object, attr_name: str, error_message: str) -> str:
+    value = getattr(target, attr_name, None)
+    if not isinstance(value, str) or not value:
+        raise VideoGenerationProviderError(error_message)
     return value
 
 
@@ -206,3 +336,47 @@ def unwrap_result_data(data: dict) -> dict:
     if isinstance(nested_data, dict):
         return nested_data
     return data
+
+
+def safe_generated_filename(value: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_.-]", "_", value).strip("._") or "video"
+
+
+def to_generated_public_path(generated_media_dir: Path, file_path: Path) -> str:
+    relative_path = file_path.relative_to(generated_media_dir)
+    return f"/generated/{relative_path.as_posix()}"
+
+
+def write_binary_response_to_file(content: object, output_path: Path) -> None:
+    if hasattr(content, "write_to_file"):
+        content.write_to_file(str(output_path))
+        return
+
+    if isinstance(content, (bytes, bytearray)):
+        output_path.write_bytes(bytes(content))
+        return
+
+    response_content = getattr(content, "content", None)
+    if isinstance(response_content, (bytes, bytearray)):
+        output_path.write_bytes(bytes(response_content))
+        return
+
+    if hasattr(content, "read"):
+        output_path.write_bytes(content.read())
+        return
+
+    raise VideoGenerationProviderError("OpenAI 영상 다운로드 응답을 파일로 저장할 수 없습니다.")
+
+
+def openai_video_error_message(video: object) -> str:
+    error = getattr(video, "error", None)
+    if isinstance(error, dict):
+        message = error.get("message")
+        if isinstance(message, str) and message:
+            return message
+
+    message = getattr(error, "message", None)
+    if isinstance(message, str) and message:
+        return message
+
+    return "OpenAI 영상 생성에 실패했습니다."
