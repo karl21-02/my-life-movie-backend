@@ -83,3 +83,37 @@ def test_worker_run_marks_job_failed_when_provider_fails(db_session: Session):
     assert result.job.error_code == "PROVIDER_ERROR"
     assert result.job.error_message == "영상 생성 provider 실행에 실패했습니다."
     assert movie.status == MovieStatus.FAILED
+
+
+def test_worker_run_next_processes_oldest_queued_job(db_session: Session):
+    user, first_movie = create_ready_movie(db_session)
+    movie_repository = SQLAlchemyMovieRepository(db_session)
+    second_movie = movie_repository.create(user_id=user.id, theme_id=1)
+    second_movie.current_draft = "두 번째 인생 영화 초안"
+    second_movie.story_brief = {"title": "두 번째 이야기", "emotions": ["도전"]}
+    second_movie.scene_plan = [{"order": 1, "summary": "두 번째 시작 장면"}]
+    second_movie.generation_prompt = "second warm cinematic life story"
+    movie_repository.update(second_movie)
+    generation_service = create_service(db_session)
+    first = generation_service.request_generation(movie_id=first_movie.id, user_id=user.id)
+    second = generation_service.request_generation(movie_id=second_movie.id, user_id=user.id)
+    worker = VideoGenerationWorkerService(
+        generation_service=generation_service,
+        provider=SuccessProvider(),
+    )
+
+    result = worker.run_next()
+
+    assert result is not None
+    assert result.job.id == first.job.id
+    assert result.job.id != second.job.id
+    assert result.job.status == VideoGenerationJobStatus.SUCCEEDED
+
+
+def test_worker_run_next_returns_none_when_queue_is_empty(db_session: Session):
+    worker = VideoGenerationWorkerService(
+        generation_service=create_service(db_session),
+        provider=SuccessProvider(),
+    )
+
+    assert worker.run_next() is None

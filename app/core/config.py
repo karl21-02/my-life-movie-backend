@@ -25,6 +25,7 @@ class Settings:
     spotify_client_id: str = ""
     spotify_client_secret: str = ""
     openai_api_key: str = ""
+    video_generation_worker_poll_interval_seconds: int = 5
 
 
 def parse_csv_env(value: str | None, default: list[str]) -> list[str]:
@@ -86,4 +87,8 @@ def get_settings() -> Settings:
         spotify_client_id=os.getenv("SPOTIFY_CLIENT_ID", ""),
         spotify_client_secret=os.getenv("SPOTIFY_CLIENT_SECRET", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+        video_generation_worker_poll_interval_seconds=parse_int_env(
+            os.getenv("VIDEO_GENERATION_WORKER_POLL_INTERVAL_SECONDS"),
+            5,
+        ),
     )

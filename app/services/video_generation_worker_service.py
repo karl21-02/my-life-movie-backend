@@ -40,3 +40,9 @@ class VideoGenerationWorkerService:
             provider_job_id=provider_result.provider_job_id,
         )
         return VideoGenerationWorkerResult(job=succeeded_job)
+
+    def run_next(self) -> VideoGenerationWorkerResult | None:
+        job = self.generation_service.get_next_queued_generation()
+        if job is None:
+            return None
+        return self.run(job_id=job.id)

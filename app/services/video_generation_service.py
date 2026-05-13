@@ -59,6 +59,9 @@ class VideoGenerationService:
             raise generation_job_not_found_error()
         return job
 
+    def get_next_queued_generation(self) -> VideoGenerationJob | None:
+        return self.job_repository.get_next_queued()
+
     def start_generation(self, *, job_id: int, provider_job_id: str | None = None) -> VideoGenerationJob:
         job = self._get_job_or_raise(job_id)
         self._ensure_status(job, allowed=(VideoGenerationJobStatus.QUEUED,))

@@ -84,3 +84,16 @@ def test_get_in_progress_by_movie_id_ignores_terminal_jobs(db_session: Session):
     repository.update(job)
 
     assert repository.get_in_progress_by_movie_id(movie.id) is None
+
+
+def test_get_next_queued_returns_oldest_queued_job(db_session: Session):
+    user, movie = _create_movie(db_session)
+    repository = SQLAlchemyVideoGenerationJobRepository(db_session)
+    first = repository.create(movie_id=movie.id, user_id=user.id, input_snapshot={"order": 1})
+    second = repository.create(movie_id=movie.id, user_id=user.id, input_snapshot={"order": 2})
+
+    next_job = repository.get_next_queued()
+
+    assert next_job is not None
+    assert next_job.id == first.id
+    assert next_job.id != second.id

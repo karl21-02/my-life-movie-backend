@@ -31,6 +31,9 @@ class VideoGenerationJobRepository(Protocol):
     def get_in_progress_by_movie_id(self, movie_id: int) -> VideoGenerationJob | None:
         ...
 
+    def get_next_queued(self) -> VideoGenerationJob | None:
+        ...
+
     def update(self, job: VideoGenerationJob) -> VideoGenerationJob:
         ...
 
@@ -79,6 +82,14 @@ class SQLAlchemyVideoGenerationJobRepository:
                 VideoGenerationJob.status.in_(IN_PROGRESS_STATUSES),
             )
             .order_by(VideoGenerationJob.created_at.desc(), VideoGenerationJob.id.desc())
+            .limit(1)
+        )
+
+    def get_next_queued(self) -> VideoGenerationJob | None:
+        return self.session.scalar(
+            select(VideoGenerationJob)
+            .where(VideoGenerationJob.status == VideoGenerationJobStatus.QUEUED)
+            .order_by(VideoGenerationJob.created_at.asc(), VideoGenerationJob.id.asc())
             .limit(1)
         )
 

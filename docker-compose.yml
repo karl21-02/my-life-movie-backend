@@ -46,6 +46,33 @@ services:
       my-life-movie-redis:
         condition: service_healthy
 
+  my-life-movie-video-worker:
+    build:
+      context: .
+      target: runtime
+    command:
+      - uv
+      - run
+      - python
+      - -m
+      - app.workers.video_generation_worker
+    environment:
+      APP_ENV: local
+      LOG_LEVEL: DEBUG
+      DATABASE_URL: mysql+pymysql://${MYSQL_USER:-my_life_movie}:${MYSQL_PASSWORD:-my_life_movie_password}@my-life-movie-mysql:3306/${MYSQL_DATABASE:-my_life_movie}
+      REDIS_URL: redis://my-life-movie-redis:6379/0
+      REFRESH_TOKEN_STORE: redis
+      REFRESH_TOKEN_REDIS_RETENTION_SECONDS: ${REFRESH_TOKEN_REDIS_RETENTION_SECONDS:-86400}
+      VIDEO_GENERATION_WORKER_POLL_INTERVAL_SECONDS: ${VIDEO_GENERATION_WORKER_POLL_INTERVAL_SECONDS:-5}
+    volumes:
+      - .:/app
+      - my-life-movie-backend-venv:/app/.venv
+    depends_on:
+      my-life-movie-mysql:
+        condition: service_healthy
+      my-life-movie-redis:
+        condition: service_healthy
+
   my-life-movie-mysql:
     image: mysql:8.4
     environment:
