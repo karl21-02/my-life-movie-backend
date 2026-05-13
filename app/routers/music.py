@@ -7,12 +7,13 @@ from fastapi import APIRouter
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.core.openapi import COMMON_PROBLEM_RESPONSES
 from app.schemas.music import MusicListResponse, MusicRecommendRequest, MusicRecommendResponse, MusicTrack
 from app.services.storage_service import build_storage_key, build_storage_service
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api/v1/music", tags=["music"])
+router = APIRouter(prefix="/api/v1/music", tags=["음악"])
 
 
 @dataclass(frozen=True)
@@ -56,7 +57,20 @@ MUSIC_BY_THEME: dict[int, list[MusicTrackSeed]] = {
 }
 
 
-@router.get("", response_model=MusicListResponse)
+@router.get(
+    "",
+    response_model=MusicListResponse,
+    summary="테마별 기본 음악 목록 조회",
+    description=(
+        "`theme_id` 쿼리 파라미터로 테마에 맞는 기본 OST 후보 목록을 반환합니다. "
+        "Spotify AI 추천과 별개로 음악 선택 화면 진입 시 즉시 보여줄 기본 트랙을 구성할 때 사용합니다. "
+        "존재하지 않는 `theme_id`를 전달하면 빈 `default_tracks` 배열을 반환합니다."
+    ),
+    responses={
+        200: {"description": "테마별 기본 음악 목록 반환 성공입니다."},
+        **COMMON_PROBLEM_RESPONSES,
+    },
+)
 async def get_music_by_theme(theme_id: int):
     """테마 ID에 맞는 기본 음악 목록을 반환합니다. (?theme_id=1)"""
     tracks = [build_theme_track(seed) for seed in MUSIC_BY_THEME.get(theme_id, [])]
@@ -188,7 +202,21 @@ def _mock_recommend(request: MusicRecommendRequest) -> MusicRecommendResponse:
     )
 
 
-@router.post("/recommend", response_model=MusicRecommendResponse)
+@router.post(
+    "/recommend",
+    response_model=MusicRecommendResponse,
+    summary="AI 음악 추천",
+    description=(
+        "사용자의 `message`·`mood`·`scene`·`story_hint`·`avoid` 정보를 바탕으로 "
+        "Spotify 트랙을 검색해 추천 음악 목록과 AI 안내 메시지를 반환합니다. "
+        "Spotify 설정이 없거나 외부 API 호출에 실패하면 프론트 플로우가 끊기지 않도록 "
+        "mock fallback 응답을 반환합니다."
+    ),
+    responses={
+        200: {"description": "음악 추천 성공입니다."},
+        **COMMON_PROBLEM_RESPONSES,
+    },
+)
 async def recommend_music(request: MusicRecommendRequest):
     settings = get_settings()
     if not settings.spotify_client_id or not settings.spotify_client_secret:

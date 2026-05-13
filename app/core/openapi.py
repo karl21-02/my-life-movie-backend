@@ -27,6 +27,18 @@ OPENAPI_TAGS = [
             "`/auth/refresh`, `/auth/logout`은 `refresh_token` HttpOnly cookie를 사용합니다."
         ),
     },
+    {
+        "name": "테마",
+        "description": "인생 영화 제작에 사용할 시각 테마 목록을 조회하는 API입니다.",
+    },
+    {
+        "name": "음악",
+        "description": "테마별 기본 음악과 Spotify 기반 추천 음악을 조회하는 API입니다.",
+    },
+    {
+        "name": "영화",
+        "description": "영화 초안 생성, 입력 자료 수집, 채팅, 요약, 결과물 관리 API입니다.",
+    },
 ]
 
 SET_REFRESH_COOKIE_HEADER = {
@@ -163,6 +175,48 @@ ACCOUNT_NOT_ACTIVE_RESPONSE = problem_response(
         "detail": "활성화되지 않은 계정입니다.",
         "instance": "/auth/me",
         "code": "ACCOUNT_NOT_ACTIVE",
+        "request_id": "req_123",
+        "errors": [],
+    },
+)
+
+FORBIDDEN_RESPONSE = problem_response(
+    description="인증된 사용자에게 해당 리소스 접근 권한이 없습니다.",
+    example={
+        "type": "http_error",
+        "title": "HTTP Error",
+        "status": 403,
+        "detail": "접근 권한이 없습니다.",
+        "instance": "/api/movies/1",
+        "code": "HTTP_ERROR",
+        "request_id": "req_123",
+        "errors": [],
+    },
+)
+
+MOVIE_NOT_FOUND_RESPONSE = problem_response(
+    description="요청한 영화를 찾을 수 없습니다.",
+    example={
+        "type": "http_error",
+        "title": "HTTP Error",
+        "status": 404,
+        "detail": "Movie not found",
+        "instance": "/api/movies/999",
+        "code": "HTTP_ERROR",
+        "request_id": "req_123",
+        "errors": [],
+    },
+)
+
+INVALID_FILE_TYPE_RESPONSE = problem_response(
+    description="업로드 파일 확장자가 허용 목록에 포함되지 않습니다.",
+    example={
+        "type": "http_error",
+        "title": "HTTP Error",
+        "status": 400,
+        "detail": "허용되지 않는 파일 형식입니다: .exe",
+        "instance": "/api/movies/1/files",
+        "code": "HTTP_ERROR",
         "request_id": "req_123",
         "errors": [],
     },
