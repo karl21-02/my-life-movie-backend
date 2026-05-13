@@ -2,6 +2,8 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings
+from app.api.movies import router as movies_router
 from app.models.movie import Movie, MovieStatus
 from app.models.video_generation_job import VideoGenerationJob, VideoGenerationJobStatus
 from app.services.access_token_service import AccessTokenClaims
@@ -171,6 +173,37 @@ def test_download_movie_file_returns_attachment(api_client, db_session: Session,
     assert response.content == b"movie-content"
     assert response.headers["content-type"].startswith("video/mp4")
     assert "attachment" in response.headers["content-disposition"]
+
+
+def test_download_movie_returns_s3_presigned_url(monkeypatch):
+    class FakeStorage:
+        def create_presigned_download(self, key: str, *, expires_seconds: int = 900):
+            assert key == "generated/videos/video_123.mp4"
+            assert expires_seconds == 600
+            return type(
+                "Download",
+                (),
+                {"url": "https://s3-presigned.test/video_123.mp4", "key": key, "method": "GET"},
+            )()
+
+    monkeypatch.setattr(
+        movies_router,
+        "get_settings",
+        lambda: Settings(
+            storage_provider="s3",
+            s3_public_base_url="https://cdn.example.com",
+            s3_presigned_url_expire_seconds=600,
+            s3_bucket_name="movie-bucket",
+        ),
+    )
+    monkeypatch.setattr(movies_router, "build_storage_service", lambda settings: FakeStorage())
+
+    download_url = movies_router.build_movie_download_url(
+        1,
+        "https://cdn.example.com/generated/videos/video_123.mp4",
+    )
+
+    assert download_url == "https://s3-presigned.test/video_123.mp4"
 
 
 def test_download_movie_not_found_returns_problem_detail(api_client):

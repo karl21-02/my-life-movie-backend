@@ -45,8 +45,7 @@ class FakeS3Client:
         self.deleted_keys.append(kwargs["Key"])
 
     def generate_presigned_url(self, operation_name, *, Params, ExpiresIn):
-        assert operation_name == "put_object"
-        return f"https://upload.test/{Params['Key']}?expires={ExpiresIn}"
+        return f"https://{operation_name}.test/{Params['Key']}?expires={ExpiresIn}"
 
 
 def test_s3_storage_service_puts_object_and_returns_public_url():
@@ -87,8 +86,23 @@ def test_s3_storage_service_creates_presigned_upload():
     )
 
     assert upload.method == "PUT"
-    assert upload.url == "https://upload.test/uploads/source.mp4?expires=60"
+    assert upload.url == "https://put_object.test/uploads/source.mp4?expires=60"
     assert upload.headers == {"Content-Type": "video/mp4"}
+
+
+def test_s3_storage_service_creates_presigned_download():
+    client = FakeS3Client()
+    storage = S3StorageService(
+        bucket_name="movie-bucket",
+        region="ap-northeast-2",
+        public_base_url="",
+        client=client,
+    )
+
+    download = storage.create_presigned_download("generated/videos/movie.mp4", expires_seconds=120)
+
+    assert download.method == "GET"
+    assert download.url == "https://get_object.test/generated/videos/movie.mp4?expires=120"
 
 
 def test_build_storage_service_uses_local_provider(tmp_path):

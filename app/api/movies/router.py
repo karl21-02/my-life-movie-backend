@@ -30,6 +30,7 @@ from app.services.access_token_service import AccessTokenClaims
 from app.services.story_generation_service import generate_story_inputs
 from app.services.video_generation_provider import resolve_video_generation_provider_name
 from app.services.video_generation_service import VideoGenerationService
+from app.services.storage_service import build_storage_service
 
 router = APIRouter(prefix="/api/movies", tags=["movies"])
 
@@ -511,10 +512,31 @@ def build_movie_download_url(movie_id: int, output_url: str | None) -> str | Non
     if not output_url:
         return None
 
-    local_public_base_path = "/" + get_settings().local_public_base_url.strip("/")
-    if urlparse(output_url).path.startswith(f"{local_public_base_path}/"):
+    settings = get_settings()
+    local_public_base_path = "/" + settings.local_public_base_url.strip("/")
+    if settings.storage_provider == "local" and urlparse(output_url).path.startswith(f"{local_public_base_path}/"):
         return f"/api/movies/{movie_id}/download/file"
+    if settings.storage_provider == "s3":
+        storage = build_storage_service(settings)
+        download = storage.create_presigned_download(
+            resolve_s3_object_key_from_output_url(
+                output_url,
+                public_base_url=settings.s3_public_base_url,
+            ),
+            expires_seconds=settings.s3_presigned_url_expire_seconds,
+        )
+        return download.url
     return output_url
+
+
+def resolve_s3_object_key_from_output_url(output_url: str, *, public_base_url: str) -> str:
+    parsed_url = urlparse(output_url)
+    output_path = unquote(parsed_url.path).lstrip("/")
+    if public_base_url:
+        public_base_path = unquote(urlparse(public_base_url).path).strip("/")
+        if public_base_path and output_path.startswith(f"{public_base_path}/"):
+            return output_path.removeprefix(f"{public_base_path}/")
+    return output_path
 
 
 def build_download_filename(title: str, extension: str) -> str:

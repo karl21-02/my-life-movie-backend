@@ -26,6 +26,14 @@ class PresignedUpload:
     headers: dict[str, str]
 
 
+@dataclass(frozen=True)
+class PresignedDownload:
+    key: str
+    url: str
+    method: str
+    expires_seconds: int
+
+
 class StorageService(Protocol):
     def put_bytes(self, key: str, content: bytes, *, content_type: str | None = None) -> StoredObject:
         ...
@@ -43,6 +51,14 @@ class StorageService(Protocol):
         content_type: str | None = None,
         expires_seconds: int = 900,
     ) -> PresignedUpload:
+        ...
+
+    def create_presigned_download(
+        self,
+        key: str,
+        *,
+        expires_seconds: int = 900,
+    ) -> PresignedDownload:
         ...
 
 
@@ -90,6 +106,20 @@ class LocalStorageService:
             method="PUT",
             expires_seconds=expires_seconds,
             headers=headers,
+        )
+
+    def create_presigned_download(
+        self,
+        key: str,
+        *,
+        expires_seconds: int = 900,
+    ) -> PresignedDownload:
+        normalized_key = normalize_storage_key(key)
+        return PresignedDownload(
+            key=normalized_key,
+            url=self.public_url(normalized_key),
+            method="GET",
+            expires_seconds=expires_seconds,
         )
 
 
@@ -177,6 +207,28 @@ class S3StorageService:
             method="PUT",
             expires_seconds=expires_seconds,
             headers=headers,
+        )
+
+    def create_presigned_download(
+        self,
+        key: str,
+        *,
+        expires_seconds: int = 900,
+    ) -> PresignedDownload:
+        normalized_key = normalize_storage_key(key)
+        url = self.client.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": self.bucket_name,
+                "Key": normalized_key,
+            },
+            ExpiresIn=expires_seconds,
+        )
+        return PresignedDownload(
+            key=normalized_key,
+            url=url,
+            method="GET",
+            expires_seconds=expires_seconds,
         )
 
 
