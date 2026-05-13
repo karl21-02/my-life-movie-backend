@@ -20,6 +20,14 @@ def create_service(db_session: Session) -> VideoGenerationService:
     )
 
 
+def create_openai_service(db_session: Session) -> VideoGenerationService:
+    return VideoGenerationService(
+        movie_repository=SQLAlchemyMovieRepository(db_session),
+        job_repository=SQLAlchemyVideoGenerationJobRepository(db_session),
+        provider_name="openai",
+    )
+
+
 def create_ready_movie(db_session: Session):
     user = create_user(db_session)
     movie_repository = SQLAlchemyMovieRepository(db_session)
@@ -41,8 +49,18 @@ def test_request_generation_creates_queued_job_and_marks_movie_generating(db_ses
     db_session.refresh(movie)
     assert result.job.status == VideoGenerationJobStatus.QUEUED
     assert result.job.progress == 0
+    assert result.job.provider == "mock"
     assert result.job.input_snapshot["provider_prompt"] == "warm cinematic life story"
     assert movie.status == MovieStatus.GENERATING
+
+
+def test_request_generation_records_configured_provider(db_session: Session):
+    user, movie = create_ready_movie(db_session)
+    service = create_openai_service(db_session)
+
+    result = service.request_generation(movie_id=movie.id, user_id=user.id)
+
+    assert result.job.provider == "openai"
 
 
 def test_request_generation_rejects_missing_generation_prompt(db_session: Session):

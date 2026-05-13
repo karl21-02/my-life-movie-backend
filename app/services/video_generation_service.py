@@ -20,9 +20,11 @@ class VideoGenerationService:
         *,
         movie_repository: MovieRepository,
         job_repository: VideoGenerationJobRepository,
+        provider_name: str = "mock",
     ) -> None:
         self.movie_repository = movie_repository
         self.job_repository = job_repository
+        self.provider_name = provider_name
 
     def request_generation(self, *, movie_id: int, user_id: int) -> VideoGenerationRequestResult:
         movie = self.movie_repository.get_by_id(movie_id)
@@ -42,6 +44,7 @@ class VideoGenerationService:
             movie_id=movie.id,
             user_id=user_id,
             input_snapshot=input_snapshot,
+            provider=self.provider_name,
         )
         movie.status = MovieStatus.GENERATING
         self.movie_repository.update(movie)

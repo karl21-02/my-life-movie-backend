@@ -25,6 +25,7 @@ from app.schemas.movie import (
 )
 from app.services.access_token_service import AccessTokenClaims
 from app.services.story_generation_service import generate_story_inputs
+from app.services.video_generation_provider import resolve_video_generation_provider_name
 from app.services.video_generation_service import VideoGenerationService
 
 router = APIRouter(prefix="/api/movies", tags=["movies"])
@@ -229,9 +230,11 @@ async def get_summary(
 
 
 def _get_video_generation_service(db: Session) -> VideoGenerationService:
+    settings = get_settings()
     return VideoGenerationService(
         movie_repository=SQLAlchemyMovieRepository(db),
         job_repository=SQLAlchemyVideoGenerationJobRepository(db),
+        provider_name=resolve_video_generation_provider_name(settings),
     )
 
 

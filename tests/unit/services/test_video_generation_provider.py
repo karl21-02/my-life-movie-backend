@@ -13,6 +13,7 @@ from app.services.video_generation_provider import (
     build_fal_payload,
     build_openai_video_prompt,
     build_video_generation_provider,
+    resolve_video_generation_provider_name,
 )
 from app.services.storage_service import LocalStorageService
 
@@ -163,6 +164,7 @@ def test_build_video_generation_provider_auto_uses_mock_without_fal_key():
     provider = build_video_generation_provider(Settings(video_generation_provider="auto", fal_key=""))
 
     assert isinstance(provider, MockVideoGenerationProvider)
+    assert resolve_video_generation_provider_name(Settings(video_generation_provider="auto", fal_key="")) == "mock"
 
 
 def test_build_video_generation_provider_auto_uses_openai_with_openai_key():
@@ -176,6 +178,9 @@ def test_build_video_generation_provider_auto_uses_openai_with_openai_key():
     )
 
     assert isinstance(provider, OpenAIVideoGenerationProvider)
+    assert resolve_video_generation_provider_name(
+        Settings(video_generation_provider="auto", openai_api_key="test-key")
+    ) == "openai"
 
 
 def test_build_video_generation_provider_auto_uses_fal_with_fal_key():
@@ -191,6 +196,9 @@ def test_build_video_generation_provider_auto_uses_fal_with_fal_key():
     )
 
     assert isinstance(provider, FalVideoGenerationProvider)
+    assert resolve_video_generation_provider_name(
+        Settings(video_generation_provider="auto", openai_api_key="", fal_key="test-key")
+    ) == "fal"
 
 
 def test_fal_video_generation_provider_requires_api_key():

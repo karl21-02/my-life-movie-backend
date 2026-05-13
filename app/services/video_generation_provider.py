@@ -235,21 +235,26 @@ class VideoGenerationProviderTimeoutError(VideoGenerationProviderError):
 
 
 def build_video_generation_provider(settings: Settings) -> VideoGenerationProvider:
-    provider = settings.video_generation_provider
+    provider = resolve_video_generation_provider_name(settings)
     if provider == "mock":
         return MockVideoGenerationProvider()
     if provider == "fal":
         return build_fal_video_generation_provider(settings)
     if provider == "openai":
         return build_openai_video_generation_provider(settings)
-    if provider == "auto":
-        if settings.openai_api_key:
-            return build_openai_video_generation_provider(settings)
-        if settings.fal_key:
-            return build_fal_video_generation_provider(settings)
-        return MockVideoGenerationProvider()
 
     raise VideoGenerationProviderConfigError(f"지원하지 않는 영상 생성 provider입니다: {provider}")
+
+
+def resolve_video_generation_provider_name(settings: Settings) -> str:
+    provider = settings.video_generation_provider
+    if provider != "auto":
+        return provider
+    if settings.openai_api_key:
+        return "openai"
+    if settings.fal_key:
+        return "fal"
+    return "mock"
 
 
 def build_fal_video_generation_provider(settings: Settings) -> FalVideoGenerationProvider:
