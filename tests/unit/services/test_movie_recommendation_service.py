@@ -60,6 +60,20 @@ def test_tmdb_movie_metadata_provider_maps_search_result():
     assert movie.provider == "tmdb"
 
 
+def test_movie_recommendation_service_searches_tmdb_with_original_title():
+    class FakeProvider:
+        def search_movie(self, title: str):
+            assert title == "The Breakfast Club"
+            return None
+
+    service = MovieRecommendationService(metadata_provider=FakeProvider())
+
+    movies = service.recommend_by_genre("하이틴", limit=1)
+
+    assert movies[0].title == "브렉퍼스트 클럽"
+    assert movies[0].provider == "fallback"
+
+
 def test_build_movie_recommendation_service_uses_tmdb_when_token_exists():
     service = build_movie_recommendation_service(Settings(tmdb_access_token="test-token"))
 

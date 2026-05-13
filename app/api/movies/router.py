@@ -575,6 +575,12 @@ def build_movie_ost(movie: Movie) -> list[schemas.OstTrack]:
 
 def build_similar_movies(genre: str) -> list[schemas.SimilarMovie]:
     return [
-        schemas.SimilarMovie(**movie.__dict__)
+        schemas.SimilarMovie(
+            id=movie.id,
+            title=movie.title,
+            thumbnail=movie.thumbnail,
+            external_url=movie.external_url,
+            provider=movie.provider,
+        )
         for movie in build_movie_recommendation_service(get_settings()).recommend_by_genre(genre)
     ]
