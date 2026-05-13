@@ -6,11 +6,7 @@ services:
       context: .
       target: runtime
     command:
-      - uv
-      - run
-      - --frozen
-      - --no-dev
-      - uvicorn
+      - /app/.venv/bin/uvicorn
       - app.main:app
       - --host
       - 0.0.0.0
@@ -62,15 +58,11 @@ services:
       - "8000:8000"
     volumes:
       - .:/app
-      - my-life-movie-backend-api-venv:/app/.venv
+      - my-life-movie-backend-api-runtime-venv:/app/.venv
     healthcheck:
       test:
         - CMD
-        - uv
-        - run
-        - --frozen
-        - --no-dev
-        - python
+        - /app/.venv/bin/python
         - -c
         - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
       interval: 10s
@@ -88,11 +80,7 @@ services:
       context: .
       target: runtime
     command:
-      - uv
-      - run
-      - --frozen
-      - --no-dev
-      - python
+      - /app/.venv/bin/python
       - -m
       - app.workers.video_generation_worker
     environment:
@@ -134,7 +122,7 @@ services:
       VIDEO_GENERATION_WORKER_POLL_INTERVAL_SECONDS: ${VIDEO_GENERATION_WORKER_POLL_INTERVAL_SECONDS:-5}
     volumes:
       - .:/app
-      - my-life-movie-backend-worker-venv:/app/.venv
+      - my-life-movie-backend-worker-runtime-venv:/app/.venv
     depends_on:
       my-life-movie-mysql:
         condition: service_healthy
@@ -178,7 +166,7 @@ services:
       start_period: 5s
 
 volumes:
-  my-life-movie-backend-api-venv:
-  my-life-movie-backend-worker-venv:
+  my-life-movie-backend-api-runtime-venv:
+  my-life-movie-backend-worker-runtime-venv:
   my-life-movie-mysql-data:
   my-life-movie-redis-data:
