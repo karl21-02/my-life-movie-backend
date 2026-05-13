@@ -12,7 +12,7 @@ from app.services.storage_service import build_storage_key, build_storage_servic
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api/v1/music", tags=["music"])
+router = APIRouter(prefix="/api/v1/music", tags=["음악"])
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,12 @@ MUSIC_BY_THEME: dict[int, list[MusicTrackSeed]] = {
 }
 
 
-@router.get("", response_model=MusicListResponse)
+@router.get(
+    "",
+    response_model=MusicListResponse,
+    summary="테마 음악 목록 조회",
+    description="테마 ID에 맞는 기본 음악 목록과 재생 가능한 미리듣기 URL을 반환합니다.",
+)
 async def get_music_by_theme(theme_id: int):
     """테마 ID에 맞는 기본 음악 목록을 반환합니다. (?theme_id=1)"""
     seeds = MUSIC_BY_THEME.get(theme_id, [])
@@ -276,7 +281,15 @@ def _mock_recommend(request: MusicRecommendRequest) -> MusicRecommendResponse:
     )
 
 
-@router.post("/recommend", response_model=MusicRecommendResponse)
+@router.post(
+    "/recommend",
+    response_model=MusicRecommendResponse,
+    summary="AI 음악 추천",
+    description=(
+        "사용자가 입력한 분위기, 감정, 장면 설명을 기반으로 Spotify/Deezer에서 "
+        "미리듣기 가능한 음악 후보를 추천합니다."
+    ),
+)
 async def recommend_music(request: MusicRecommendRequest):
     settings = get_settings()
     query = _spotify_query(request)

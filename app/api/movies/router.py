@@ -10,6 +10,11 @@ from app.api.movies import schemas
 from app.core.config import get_settings
 from app.core.deps import get_current_user
 from app.core.errors import AppError
+from app.core.openapi import (
+    GENERATION_REQUEST_PROBLEM_RESPONSES,
+    GENERATION_STATUS_PROBLEM_RESPONSES,
+    MOVIE_PROBLEM_RESPONSES,
+)
 from app.db.session import get_db_session
 from app.models.movie import Movie
 from app.models.video_generation_job import VideoGenerationJob, VideoGenerationJobStatus
@@ -34,7 +39,12 @@ from app.services.video_generation_service import VideoGenerationService
 from app.services.storage_service import build_storage_service
 from app.services.movie_recommendation_service import build_movie_recommendation_service
 
-router = APIRouter(prefix="/api/movies", tags=["movies"])
+router = APIRouter(prefix="/api/movies", tags=["영화"])
+MOVIE_LIST_PROBLEM_RESPONSES = {
+    401: MOVIE_PROBLEM_RESPONSES[401],
+    422: MOVIE_PROBLEM_RESPONSES[422],
+    500: MOVIE_PROBLEM_RESPONSES[500],
+}
 
 # 파일 업로드 시 허용되는 확장자 목록 (소문자 기준)
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf", ".txt", ".mp4", ".mov"}
@@ -205,7 +215,17 @@ def _get_video_generation_service(db: Session) -> VideoGenerationService:
     )
 
 
-@router.get("/{movie_id}/generation", response_model=GenerationStatusResponse)
+@router.get(
+    "/{movie_id}/generation",
+    response_model=GenerationStatusResponse,
+    summary="영상 생성 상태 조회",
+    description=(
+        "현재 사용자의 특정 영화에 대해 가장 최근 영상 생성 Job 상태를 조회합니다. "
+        "`status`는 `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELED` 중 하나이며, "
+        "`progress`는 0~100 사이의 근사 진행률입니다."
+    ),
+    responses=GENERATION_STATUS_PROBLEM_RESPONSES,
+)
 async def get_generation_status(
     movie_id: int,
     db: Session = Depends(get_db_session),
@@ -228,7 +248,16 @@ async def get_generation_status(
     )
 
 
-@router.post("/{movie_id}/generate", response_model=GenerationRequestResponse)
+@router.post(
+    "/{movie_id}/generate",
+    response_model=GenerationRequestResponse,
+    summary="영상 생성 요청",
+    description=(
+        "구조화된 이야기 입력과 generation prompt를 기준으로 비동기 영상 생성 Job을 생성합니다. "
+        "요청 성공 시 `QUEUED` 상태를 반환하며, 실제 provider 처리는 worker가 수행합니다."
+    ),
+    responses=GENERATION_REQUEST_PROBLEM_RESPONSES,
+)
 async def generate_movie(
     movie_id: int,
     db: Session = Depends(get_db_session),
@@ -248,7 +277,13 @@ async def generate_movie(
     )
 
 
-@router.post("/{movie_id}/generation/cancel", response_model=GenerationStatusResponse)
+@router.post(
+    "/{movie_id}/generation/cancel",
+    response_model=GenerationStatusResponse,
+    summary="영상 생성 취소",
+    description="현재 진행 중인 영상 생성 Job을 취소하고 영화 상태를 초안 상태로 되돌립니다.",
+    responses=GENERATION_STATUS_PROBLEM_RESPONSES,
+)
 async def cancel_generation(
     movie_id: int,
     db: Session = Depends(get_db_session),
@@ -271,7 +306,13 @@ async def cancel_generation(
     )
 
 
-@router.get("", response_model=list[schemas.MovieSummary])
+@router.get(
+    "",
+    response_model=list[schemas.MovieSummary],
+    summary="내 영화 목록 조회",
+    description="현재 사용자가 생성한 영화 목록을 최신 생성 Job 상태와 함께 반환합니다.",
+    responses=MOVIE_LIST_PROBLEM_RESPONSES,
+)
 async def get_movies(
     db: Session = Depends(get_db_session),
     current_user: AccessTokenClaims = Depends(get_current_user),
@@ -287,7 +328,13 @@ async def get_movies(
     ]
 
 
-@router.get("/{movie_id}", response_model=schemas.Movie)
+@router.get(
+    "/{movie_id}",
+    response_model=schemas.Movie,
+    summary="영화 상세 조회",
+    description="현재 사용자의 특정 영화 상세 정보와 저장된 유사 영화 추천 결과를 반환합니다.",
+    responses=MOVIE_PROBLEM_RESPONSES,
+)
 async def get_movie(
     movie_id: int,
     db: Session = Depends(get_db_session),
