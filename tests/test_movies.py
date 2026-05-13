@@ -73,7 +73,6 @@ def test_get_movie_not_found_returns_problem_detail():
 
 def test_delete_movie_returns_message():
     client = create_test_client()
-    # 먼저 존재 확인
     assert client.get("/api/movies/3").status_code == 200
 
     response = client.delete("/api/movies/3")
@@ -128,3 +127,61 @@ def test_request_id_propagated_in_movie_response():
 
     assert response.status_code == 200
     assert response.headers.get("X-Request-ID") == "req_movie_id_test"
+
+
+# ── 비슷한 영화 추천 ──────────────────────────────────────────
+
+def test_get_similar_movies_returns_200():
+    response = create_test_client().get("/api/movies/1/similar")
+
+    assert response.status_code == 200
+
+
+def test_get_similar_movies_response_shape():
+    response = create_test_client().get("/api/movies/1/similar")
+
+    body = response.json()
+    assert body["movie_id"] == 1
+    assert isinstance(body["similar_movies"], list)
+
+
+def test_get_similar_movies_item_shape():
+    response = create_test_client().get("/api/movies/1/similar")
+
+    movies = response.json()["similar_movies"]
+    assert len(movies) > 0
+    first = movies[0]
+    assert "id" in first
+    assert "title" in first
+    assert "thumbnail" in first
+
+
+def test_get_similar_movies_limit():
+    response = create_test_client().get("/api/movies/1/similar")
+
+    # 장르별 유명 영화 풀이 10편이므로 최대 4편 반환
+    movies = response.json()["similar_movies"]
+    assert len(movies) <= 4
+
+
+def test_get_similar_movies_genre_based():
+    # movie_id=1(로맨스), movie_id=2(드라마): 추천 결과가 달라야 한다
+    res1 = create_test_client().get("/api/movies/1/similar")
+    res2 = create_test_client().get("/api/movies/2/similar")
+
+    ids1 = {m["id"] for m in res1.json()["similar_movies"]}
+    ids2 = {m["id"] for m in res2.json()["similar_movies"]}
+    # 로맨스(100번대)와 드라마(200번대) 풀은 겹치지 않는다
+    assert ids1.isdisjoint(ids2)
+
+
+def test_get_similar_movies_not_found_returns_problem_detail():
+    response = create_test_client().get(
+        "/api/movies/9999/similar",
+        headers={"X-Request-ID": "req_similar_not_found"},
+    )
+
+    assert response.status_code == 404
+    body = response.json()
+    assert body["code"] == "MOVIE_NOT_FOUND"
+    assert body["request_id"] == "req_similar_not_found"

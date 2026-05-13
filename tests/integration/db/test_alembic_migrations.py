@@ -47,7 +47,7 @@ def test_alembic_upgrade_head_creates_auth_tables(tmp_path, monkeypatch):
                 text("SELECT version_num FROM alembic_version"),
             ).scalar_one()
 
-        assert version == "20260513_0004"
+        assert version == "20260513_0005"
         engine.dispose()
     finally:
         get_settings.cache_clear()

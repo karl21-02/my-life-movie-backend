@@ -219,3 +219,15 @@ async def share_movie(movie_id: int, request: Request) -> schemas.ShareMovieResp
         title=movie.title,
         share_url=share_url,
     )
+
+
+@router.get("/{movie_id}/similar", response_model=schemas.SimilarMoviesResponse)
+async def get_similar_movies(movie_id: int) -> schemas.SimilarMoviesResponse:
+    """장르·감정 기반으로 유사한 영화 최대 4편을 추천한다.
+
+    - 1순위: 같은 장르
+    - 2순위: 같은 감정(sentiment)
+    - 자기 자신은 결과에서 제외된다.
+    """
+    similar = service.get_similar_movies(movie_id)
+    return schemas.SimilarMoviesResponse(movie_id=movie_id, similar_movies=similar)
