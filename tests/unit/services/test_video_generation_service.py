@@ -98,6 +98,24 @@ def test_get_latest_generation_returns_latest_job(db_session: Session):
     assert found.id == created.job.id
 
 
+def test_mark_generation_failed_records_provider_job_id(db_session: Session):
+    user, movie = create_ready_movie(db_session)
+    service = create_service(db_session)
+    created = service.request_generation(movie_id=movie.id, user_id=user.id)
+    service.start_generation(job_id=created.job.id)
+
+    failed = service.mark_generation_failed(
+        job_id=created.job.id,
+        error_code="PROVIDER_MODERATION_BLOCKED",
+        error_message="moderation_blocked",
+        provider_job_id="video_failed_1",
+    )
+
+    assert failed.status == VideoGenerationJobStatus.FAILED
+    assert failed.provider_job_id == "video_failed_1"
+    assert failed.error_code == "PROVIDER_MODERATION_BLOCKED"
+
+
 def test_get_latest_generation_returns_404_when_job_is_missing(db_session: Session):
     user, movie = create_ready_movie(db_session)
     service = create_service(db_session)

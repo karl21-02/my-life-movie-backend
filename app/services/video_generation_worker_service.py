@@ -33,12 +33,26 @@ class VideoGenerationWorkerService:
 
         try:
             provider_result = self.provider.generate(job.input_snapshot)
-        except Exception:
+        except Exception as exc:
+            provider_job_id = getattr(exc, "provider_job_id", None)
+            error_message = sanitize_provider_error_message(exc)
+            logger.warning(
+                "영상 생성 provider 실행에 실패했습니다.",
+                extra={
+                    "event": "video_generation_provider_failed",
+                    "job_id": job.id,
+                    "movie_id": job.movie_id,
+                    "provider_job_id": provider_job_id,
+                    "error_type": type(exc).__name__,
+                    "error_code": provider_error_code(error_message),
+                },
+            )
             try:
                 failed_job = self.generation_service.mark_generation_failed(
                     job_id=job.id,
-                    error_code="PROVIDER_ERROR",
-                    error_message="영상 생성 provider 실행에 실패했습니다.",
+                    error_code=provider_error_code(error_message),
+                    error_message=error_message,
+                    provider_job_id=provider_job_id,
                 )
             except AppError as exc:
                 self._log_skipped_job(job_id=job.id, exc=exc)
@@ -73,3 +87,17 @@ class VideoGenerationWorkerService:
                 "error_type": exc.type,
             },
         )
+
+
+def sanitize_provider_error_message(exc: Exception) -> str:
+    message = str(exc).strip() or "영상 생성 provider 실행에 실패했습니다."
+    return message[:500]
+
+
+def provider_error_code(message: str) -> str:
+    normalized = message.lower()
+    if "moderation_blocked" in normalized or "moderation" in normalized:
+        return "PROVIDER_MODERATION_BLOCKED"
+    if "timeout" in normalized or "시간이 초과" in normalized:
+        return "PROVIDER_TIMEOUT"
+    return "PROVIDER_ERROR"

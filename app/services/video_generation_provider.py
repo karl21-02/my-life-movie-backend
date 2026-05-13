@@ -160,8 +160,8 @@ class OpenAIVideoGenerationProvider:
             size=self.size,
             seconds=self.seconds,
         )
+        video_id = require_object_attr(video, "id", "OpenAI 영상 응답에 id 값이 없습니다.")
         completed_video = self._wait_until_completed(video)
-        video_id = require_object_attr(completed_video, "id", "OpenAI 영상 응답에 id 값이 없습니다.")
 
         video_object = self._download_variant(
             video_id=video_id,
@@ -184,9 +184,15 @@ class OpenAIVideoGenerationProvider:
             if status == "completed":
                 return current_video
             if status == "failed":
-                raise VideoGenerationProviderError(openai_video_error_message(current_video))
+                raise VideoGenerationProviderError(
+                    openai_video_error_message(current_video),
+                    provider_job_id=getattr(current_video, "id", None),
+                )
             if status not in {"queued", "in_progress"}:
-                raise VideoGenerationProviderError(f"OpenAI 영상 생성 상태를 처리할 수 없습니다: {status}")
+                raise VideoGenerationProviderError(
+                    f"OpenAI 영상 생성 상태를 처리할 수 없습니다: {status}",
+                    provider_job_id=getattr(current_video, "id", None),
+                )
 
             time.sleep(self.poll_interval_seconds)
             video_id = require_object_attr(current_video, "id", "OpenAI 영상 응답에 id 값이 없습니다.")
@@ -223,7 +229,9 @@ class OpenAIVideoGenerationProvider:
 
 
 class VideoGenerationProviderError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, provider_job_id: str | None = None) -> None:
+        super().__init__(message)
+        self.provider_job_id = provider_job_id
 
 
 class VideoGenerationProviderConfigError(VideoGenerationProviderError):
@@ -338,6 +346,11 @@ def build_openai_video_prompt(input_snapshot: dict) -> str:
         (
             "Subject continuity: keep one consistent protagonist, consistent age, face, clothing, "
             "hair, body scale, and spatial layout throughout the clip. Avoid identity drift."
+        ),
+        (
+            "Safety and casting: all visible people are fictional adults age 20 or older. "
+            "Do not depict minors, public figures, real identifiable people, nudity, sexual content, "
+            "graphic injury, self-harm, weapons, or illegal activity. Use symbolic adult actors for memories."
         ),
         (
             "Cinematography: one coherent 16:9 cinematic shot, 35mm film look, slow dolly-in "
@@ -532,12 +545,14 @@ def content_type_for_extension(extension: str) -> str:
 def openai_video_error_message(video: object) -> str:
     error = getattr(video, "error", None)
     if isinstance(error, dict):
+        code = error.get("code")
         message = error.get("message")
         if isinstance(message, str) and message:
-            return message
+            return f"{code}: {message}" if isinstance(code, str) and code else message
 
+    code = getattr(error, "code", None)
     message = getattr(error, "message", None)
     if isinstance(message, str) and message:
-        return message
+        return f"{code}: {message}" if isinstance(code, str) and code else message
 
     return "OpenAI 영상 생성에 실패했습니다."

@@ -109,6 +109,7 @@ class VideoGenerationService:
         job_id: int,
         error_code: str,
         error_message: str,
+        provider_job_id: str | None = None,
     ) -> VideoGenerationJob:
         job = self._get_job_or_raise(job_id)
         self._ensure_status(
@@ -119,6 +120,8 @@ class VideoGenerationService:
         job.status = VideoGenerationJobStatus.FAILED
         job.error_code = error_code
         job.error_message = error_message
+        if provider_job_id is not None:
+            job.provider_job_id = provider_job_id
         job.completed_at = now_utc()
         self._update_job(job)
 

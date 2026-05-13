@@ -30,6 +30,13 @@ class FailingProvider:
         raise RuntimeError("provider timeout")
 
 
+class ModerationFailingProvider:
+    def generate(self, input_snapshot: dict) -> VideoGenerationProviderResult:
+        exc = RuntimeError("moderation_blocked: Your request was blocked by our moderation system.")
+        exc.provider_job_id = "video_failed_1"
+        raise exc
+
+
 class DeletingProvider:
     def __init__(self, db_session: Session, job_id: int) -> None:
         self.db_session = db_session
@@ -101,9 +108,26 @@ def test_worker_run_marks_job_failed_when_provider_fails(db_session: Session):
 
     db_session.refresh(movie)
     assert result.job.status == VideoGenerationJobStatus.FAILED
-    assert result.job.error_code == "PROVIDER_ERROR"
-    assert result.job.error_message == "영상 생성 provider 실행에 실패했습니다."
+    assert result.job.error_code == "PROVIDER_TIMEOUT"
+    assert result.job.error_message == "provider timeout"
     assert movie.status == MovieStatus.FAILED
+
+
+def test_worker_run_records_provider_moderation_failure_details(db_session: Session):
+    user, movie = create_ready_movie(db_session)
+    generation_service = create_service(db_session)
+    created = generation_service.request_generation(movie_id=movie.id, user_id=user.id)
+    worker = VideoGenerationWorkerService(
+        generation_service=generation_service,
+        provider=ModerationFailingProvider(),
+    )
+
+    result = worker.run(job_id=created.job.id)
+
+    assert result.job.status == VideoGenerationJobStatus.FAILED
+    assert result.job.error_code == "PROVIDER_MODERATION_BLOCKED"
+    assert result.job.error_message.startswith("moderation_blocked")
+    assert result.job.provider_job_id == "video_failed_1"
 
 
 def test_worker_run_next_processes_oldest_queued_job(db_session: Session):

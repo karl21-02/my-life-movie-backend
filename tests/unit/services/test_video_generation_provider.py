@@ -144,6 +144,7 @@ def test_build_openai_video_prompt_compiles_structured_cinematic_prompt():
     assert "Reference asset guidance: 1 uploaded image reference" in prompt
     assert "Directorial intent:" in prompt
     assert "Subject continuity:" in prompt
+    assert "all visible people are fictional adults age 20 or older" in prompt
     assert "Cinematography: one coherent 16:9 cinematic shot" in prompt
     assert "Motion quality:" in prompt
     assert "Strict quality constraints: no on-screen text" in prompt
@@ -169,6 +170,7 @@ def test_openai_video_generation_provider_polls_downloads_and_returns_static_pat
             assert kwargs["size"] == "1280x720"
             assert kwargs["seconds"] == "8"
             assert "Core story: warm cinematic life story" in kwargs["prompt"]
+            assert "all visible people are fictional adults age 20 or older" in kwargs["prompt"]
             assert "Cinematography: one coherent 16:9 cinematic shot" in kwargs["prompt"]
             assert "Strict quality constraints: no on-screen text" in kwargs["prompt"]
             return SimpleNamespace(id="video_123", status="queued")
