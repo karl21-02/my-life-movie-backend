@@ -40,8 +40,8 @@ def create_app() -> FastAPI:
     app.middleware("http")(request_context_middleware)
     register_exception_handlers(app)
     Instrumentator().instrument(app).expose(app)
-    Path(settings.generated_media_dir).mkdir(parents=True, exist_ok=True)
-    app.mount("/generated", StaticFiles(directory=settings.generated_media_dir), name="generated")
+    Path(settings.local_storage_dir).mkdir(parents=True, exist_ok=True)
+    app.mount("/generated", StaticFiles(directory=settings.local_storage_dir), name="generated")
 
     app.include_router(themes.router)
     app.include_router(music.router)

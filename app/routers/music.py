@@ -1,4 +1,5 @@
 import base64
+from dataclasses import dataclass
 from hashlib import sha1
 
 import httpx
@@ -7,41 +8,50 @@ from fastapi import APIRouter
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.schemas.music import MusicListResponse, MusicRecommendRequest, MusicRecommendResponse, MusicTrack
+from app.services.storage_service import build_storage_key, build_storage_service
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/music", tags=["music"])
 
-# 테마별 기본 음악 목록 <- 뭘로 정하지
-MUSIC_BY_THEME: dict[int, list[MusicTrack]] = {
+
+@dataclass(frozen=True)
+class MusicTrackSeed:
+    music_id: int
+    title: str
+    object_name: str
+    artist: str = "My Life Movie"
+
+
+MUSIC_BY_THEME: dict[int, list[MusicTrackSeed]] = {
     1: [
-        MusicTrack(music_id=101, title="Summer Crush", file_url="/static/music/summer_crush.mp3"),
-        MusicTrack(music_id=102, title="First Love Story", file_url="/static/music/first_love.mp3"),
-        MusicTrack(music_id=103, title="School Days", file_url="/static/music/school_days.mp3"),
+        MusicTrackSeed(music_id=101, title="Summer Crush", object_name="teen/summer_crush.mp3"),
+        MusicTrackSeed(music_id=102, title="First Love Story", object_name="teen/first_love.mp3"),
+        MusicTrackSeed(music_id=103, title="School Days", object_name="teen/school_days.mp3"),
     ],
     2: [
-        MusicTrack(music_id=201, title="Neon City", file_url="/static/music/neon_city.mp3"),
-        MusicTrack(music_id=202, title="Digital Rain", file_url="/static/music/digital_rain.mp3"),
-        MusicTrack(music_id=203, title="Synthwave Night", file_url="/static/music/synthwave_night.mp3"),
+        MusicTrackSeed(music_id=201, title="Neon City", object_name="city/neon_city.mp3"),
+        MusicTrackSeed(music_id=202, title="Digital Rain", object_name="city/digital_rain.mp3"),
+        MusicTrackSeed(music_id=203, title="Synthwave Night", object_name="city/synthwave_night.mp3"),
     ],
     3: [
-        MusicTrack(music_id=301, title="Silent Waltz", file_url="/static/music/silent_waltz.mp3"),
-        MusicTrack(music_id=302, title="Old Cinema", file_url="/static/music/old_cinema.mp3"),
+        MusicTrackSeed(music_id=301, title="Silent Waltz", object_name="classic/silent_waltz.mp3"),
+        MusicTrackSeed(music_id=302, title="Old Cinema", object_name="classic/old_cinema.mp3"),
     ],
     4: [
-        MusicTrack(music_id=401, title="Fairy Garden", file_url="/static/music/fairy_garden.mp3"),
-        MusicTrack(music_id=402, title="Magic Spell", file_url="/static/music/magic_spell.mp3"),
-        MusicTrack(music_id=403, title="Enchanted Forest", file_url="/static/music/enchanted_forest.mp3"),
+        MusicTrackSeed(music_id=401, title="Fairy Garden", object_name="fantasy/fairy_garden.mp3"),
+        MusicTrackSeed(music_id=402, title="Magic Spell", object_name="fantasy/magic_spell.mp3"),
+        MusicTrackSeed(music_id=403, title="Enchanted Forest", object_name="fantasy/enchanted_forest.mp3"),
     ],
     5: [
-        MusicTrack(music_id=501, title="Sakura Memory", file_url="/static/music/sakura_memory.mp3"),
-        MusicTrack(music_id=502, title="Evening Festival", file_url="/static/music/evening_festival.mp3"),
-        MusicTrack(music_id=503, title="Summer Cicadas", file_url="/static/music/summer_cicadas.mp3"),
+        MusicTrackSeed(music_id=501, title="Sakura Memory", object_name="anime/sakura_memory.mp3"),
+        MusicTrackSeed(music_id=502, title="Evening Festival", object_name="anime/evening_festival.mp3"),
+        MusicTrackSeed(music_id=503, title="Summer Cicadas", object_name="anime/summer_cicadas.mp3"),
     ],
     6: [
-        MusicTrack(music_id=601, title="Spirited Journey", file_url="/static/music/spirited_journey.mp3"),
-        MusicTrack(music_id=602, title="My Neighbor's Theme", file_url="/static/music/neighbor_theme.mp3"),
-        MusicTrack(music_id=603, title="Castle in the Sky", file_url="/static/music/castle_sky.mp3"),
+        MusicTrackSeed(music_id=601, title="Spirited Journey", object_name="ghibli/spirited_journey.mp3"),
+        MusicTrackSeed(music_id=602, title="My Neighbor's Theme", object_name="ghibli/neighbor_theme.mp3"),
+        MusicTrackSeed(music_id=603, title="Castle in the Sky", object_name="ghibli/castle_sky.mp3"),
     ],
 }
 
@@ -49,8 +59,21 @@ MUSIC_BY_THEME: dict[int, list[MusicTrack]] = {
 @router.get("", response_model=MusicListResponse)
 async def get_music_by_theme(theme_id: int):
     """테마 ID에 맞는 기본 음악 목록을 반환합니다. (?theme_id=1)"""
-    tracks = MUSIC_BY_THEME.get(theme_id, [])
+    tracks = [build_theme_track(seed) for seed in MUSIC_BY_THEME.get(theme_id, [])]
     return MusicListResponse(default_tracks=tracks, ai_recommended=[])
+
+
+def build_theme_track(seed: MusicTrackSeed) -> MusicTrack:
+    settings = get_settings()
+    storage = build_storage_service(settings)
+    prefix = settings.s3_music_prefix if settings.storage_provider == "s3" else "music"
+    return MusicTrack(
+        music_id=seed.music_id,
+        title=seed.title,
+        file_url=storage.public_url(build_storage_key(prefix, seed.object_name)),
+        artist=seed.artist,
+        provider=settings.storage_provider,
+    )
 
 
 async def _get_spotify_token(client_id: str, client_secret: str) -> str:

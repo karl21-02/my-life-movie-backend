@@ -38,6 +38,20 @@ class Settings:
     fal_poll_interval_seconds: float = 5
     fal_max_wait_seconds: int = 900
     video_generation_worker_poll_interval_seconds: int = 5
+    storage_provider: str = "local"
+    local_storage_dir: str = "generated"
+    local_public_base_url: str = "/generated"
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_session_token: str = ""
+    aws_region: str = "ap-northeast-2"
+    s3_bucket_name: str = ""
+    s3_public_base_url: str = ""
+    s3_endpoint_url: str = ""
+    s3_generated_video_prefix: str = "generated/videos"
+    s3_generated_thumbnail_prefix: str = "generated/thumbnails"
+    s3_music_prefix: str = "music"
+    s3_presigned_url_expire_seconds: int = 900
 
 
 def parse_csv_env(value: str | None, default: list[str]) -> list[str]:
@@ -133,5 +147,22 @@ def get_settings() -> Settings:
         video_generation_worker_poll_interval_seconds=parse_int_env(
             os.getenv("VIDEO_GENERATION_WORKER_POLL_INTERVAL_SECONDS"),
             5,
+        ),
+        storage_provider=os.getenv("STORAGE_PROVIDER", "local").strip().lower(),
+        local_storage_dir=os.getenv("LOCAL_STORAGE_DIR", os.getenv("GENERATED_MEDIA_DIR", "generated")),
+        local_public_base_url=os.getenv("LOCAL_PUBLIC_BASE_URL", "/generated").rstrip("/"),
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", ""),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", ""),
+        aws_session_token=os.getenv("AWS_SESSION_TOKEN", ""),
+        aws_region=os.getenv("AWS_REGION", "ap-northeast-2"),
+        s3_bucket_name=os.getenv("S3_BUCKET_NAME", ""),
+        s3_public_base_url=os.getenv("S3_PUBLIC_BASE_URL", "").rstrip("/"),
+        s3_endpoint_url=os.getenv("S3_ENDPOINT_URL", ""),
+        s3_generated_video_prefix=os.getenv("S3_GENERATED_VIDEO_PREFIX", "generated/videos").strip("/"),
+        s3_generated_thumbnail_prefix=os.getenv("S3_GENERATED_THUMBNAIL_PREFIX", "generated/thumbnails").strip("/"),
+        s3_music_prefix=os.getenv("S3_MUSIC_PREFIX", "music").strip("/"),
+        s3_presigned_url_expire_seconds=parse_int_env(
+            os.getenv("S3_PRESIGNED_URL_EXPIRE_SECONDS"),
+            900,
         ),
     )

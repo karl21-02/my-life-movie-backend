@@ -6,13 +6,19 @@ services:
       context: .
       target: runtime
     command:
-      - /app/.venv/bin/uvicorn
+      - uv
+      - run
+      - --frozen
+      - --no-dev
+      - uvicorn
       - app.main:app
       - --host
       - 0.0.0.0
       - --port
       - "8000"
       - --reload
+      - --reload-dir
+      - app
     environment:
       APP_ENV: local
       LOG_LEVEL: DEBUG
@@ -26,6 +32,20 @@ services:
       SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
       VIDEO_GENERATION_PROVIDER: ${VIDEO_GENERATION_PROVIDER:-auto}
       GENERATED_MEDIA_DIR: ${GENERATED_MEDIA_DIR:-generated}
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      LOCAL_STORAGE_DIR: ${LOCAL_STORAGE_DIR:-generated}
+      LOCAL_PUBLIC_BASE_URL: ${LOCAL_PUBLIC_BASE_URL:-/generated}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_GENERATED_VIDEO_PREFIX: ${S3_GENERATED_VIDEO_PREFIX:-generated/videos}
+      S3_GENERATED_THUMBNAIL_PREFIX: ${S3_GENERATED_THUMBNAIL_PREFIX:-generated/thumbnails}
+      S3_MUSIC_PREFIX: ${S3_MUSIC_PREFIX:-music}
+      S3_PRESIGNED_URL_EXPIRE_SECONDS: ${S3_PRESIGNED_URL_EXPIRE_SECONDS:-900}
       OPENAI_VIDEO_MODEL: ${OPENAI_VIDEO_MODEL:-sora-2}
       OPENAI_VIDEO_SIZE: ${OPENAI_VIDEO_SIZE:-1280x720}
       OPENAI_VIDEO_SECONDS: ${OPENAI_VIDEO_SECONDS:-4}
@@ -40,11 +60,15 @@ services:
       - "8000:8000"
     volumes:
       - .:/app
-      - my-life-movie-backend-venv:/app/.venv
+      - my-life-movie-backend-api-venv:/app/.venv
     healthcheck:
       test:
         - CMD
-        - /app/.venv/bin/python
+        - uv
+        - run
+        - --frozen
+        - --no-dev
+        - python
         - -c
         - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
       interval: 10s
@@ -62,7 +86,11 @@ services:
       context: .
       target: runtime
     command:
-      - /app/.venv/bin/python
+      - uv
+      - run
+      - --frozen
+      - --no-dev
+      - python
       - -m
       - app.workers.video_generation_worker
     environment:
@@ -75,6 +103,20 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       VIDEO_GENERATION_PROVIDER: ${VIDEO_GENERATION_PROVIDER:-auto}
       GENERATED_MEDIA_DIR: ${GENERATED_MEDIA_DIR:-generated}
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      LOCAL_STORAGE_DIR: ${LOCAL_STORAGE_DIR:-generated}
+      LOCAL_PUBLIC_BASE_URL: ${LOCAL_PUBLIC_BASE_URL:-/generated}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_GENERATED_VIDEO_PREFIX: ${S3_GENERATED_VIDEO_PREFIX:-generated/videos}
+      S3_GENERATED_THUMBNAIL_PREFIX: ${S3_GENERATED_THUMBNAIL_PREFIX:-generated/thumbnails}
+      S3_MUSIC_PREFIX: ${S3_MUSIC_PREFIX:-music}
+      S3_PRESIGNED_URL_EXPIRE_SECONDS: ${S3_PRESIGNED_URL_EXPIRE_SECONDS:-900}
       OPENAI_VIDEO_MODEL: ${OPENAI_VIDEO_MODEL:-sora-2}
       OPENAI_VIDEO_SIZE: ${OPENAI_VIDEO_SIZE:-1280x720}
       OPENAI_VIDEO_SECONDS: ${OPENAI_VIDEO_SECONDS:-4}
@@ -88,7 +130,7 @@ services:
       VIDEO_GENERATION_WORKER_POLL_INTERVAL_SECONDS: ${VIDEO_GENERATION_WORKER_POLL_INTERVAL_SECONDS:-5}
     volumes:
       - .:/app
-      - my-life-movie-backend-venv:/app/.venv
+      - my-life-movie-backend-worker-venv:/app/.venv
     depends_on:
       my-life-movie-mysql:
         condition: service_healthy
@@ -132,6 +174,7 @@ services:
       start_period: 5s
 
 volumes:
-  my-life-movie-backend-venv:
+  my-life-movie-backend-api-venv:
+  my-life-movie-backend-worker-venv:
   my-life-movie-mysql-data:
   my-life-movie-redis-data:

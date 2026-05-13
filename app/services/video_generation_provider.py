@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from hashlib import sha256
-from pathlib import Path
 import re
+import tempfile
 import time
 from typing import Protocol
 
@@ -9,6 +9,12 @@ import httpx
 from openai import OpenAI
 
 from app.core.config import Settings
+from app.services.storage_service import (
+    StoredObject,
+    StorageService,
+    build_storage_key,
+    build_storage_service,
+)
 
 
 @dataclass(frozen=True)
@@ -128,7 +134,9 @@ class OpenAIVideoGenerationProvider:
         seconds: str,
         poll_interval_seconds: float,
         max_wait_seconds: int,
-        generated_media_dir: str,
+        storage: StorageService,
+        video_prefix: str,
+        thumbnail_prefix: str,
         client: OpenAI | None = None,
     ) -> None:
         if not api_key:
@@ -139,7 +147,9 @@ class OpenAIVideoGenerationProvider:
         self.seconds = seconds
         self.poll_interval_seconds = poll_interval_seconds
         self.max_wait_seconds = max_wait_seconds
-        self.generated_media_dir = Path(generated_media_dir)
+        self.storage = storage
+        self.video_prefix = video_prefix
+        self.thumbnail_prefix = thumbnail_prefix
         self.client = client or OpenAI(api_key=api_key)
 
     def generate(self, input_snapshot: dict) -> VideoGenerationProviderResult:
@@ -153,21 +163,17 @@ class OpenAIVideoGenerationProvider:
         completed_video = self._wait_until_completed(video)
         video_id = require_object_attr(completed_video, "id", "OpenAI 영상 응답에 id 값이 없습니다.")
 
-        video_path = self._download_variant(
+        video_object = self._download_variant(
             video_id=video_id,
             variant="video",
-            directory_name="videos",
+            prefix=self.video_prefix,
             extension="mp4",
         )
-        thumbnail_path = self._download_thumbnail(video_id)
+        thumbnail_object = self._download_thumbnail(video_id)
         return VideoGenerationProviderResult(
             provider_job_id=video_id,
-            output_url=to_generated_public_path(self.generated_media_dir, video_path),
-            thumbnail_url=(
-                to_generated_public_path(self.generated_media_dir, thumbnail_path)
-                if thumbnail_path is not None
-                else None
-            ),
+            output_url=video_object.url,
+            thumbnail_url=thumbnail_object.url if thumbnail_object is not None else None,
         )
 
     def _wait_until_completed(self, video: object) -> object:
@@ -188,12 +194,12 @@ class OpenAIVideoGenerationProvider:
 
         raise VideoGenerationProviderTimeoutError("OpenAI 영상 생성 대기 시간이 초과되었습니다.")
 
-    def _download_thumbnail(self, video_id: str) -> Path | None:
+    def _download_thumbnail(self, video_id: str) -> StoredObject | None:
         try:
             return self._download_variant(
                 video_id=video_id,
                 variant="thumbnail",
-                directory_name="thumbnails",
+                prefix=self.thumbnail_prefix,
                 extension="webp",
             )
         except Exception:
@@ -204,15 +210,16 @@ class OpenAIVideoGenerationProvider:
         *,
         video_id: str,
         variant: str,
-        directory_name: str,
+        prefix: str,
         extension: str,
-    ) -> Path:
-        output_dir = self.generated_media_dir / directory_name
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{safe_generated_filename(video_id)}.{extension}"
+    ) -> StoredObject:
+        key = build_storage_key(prefix, f"{safe_generated_filename(video_id)}.{extension}")
         content = self.client.videos.download_content(video_id, variant=variant)
-        write_binary_response_to_file(content, output_path)
-        return output_path
+        return self.storage.put_bytes(
+            key,
+            read_binary_response(content),
+            content_type=content_type_for_extension(extension),
+        )
 
 
 class VideoGenerationProviderError(RuntimeError):
@@ -256,6 +263,8 @@ def build_fal_video_generation_provider(settings: Settings) -> FalVideoGeneratio
 
 
 def build_openai_video_generation_provider(settings: Settings) -> OpenAIVideoGenerationProvider:
+    video_prefix = settings.s3_generated_video_prefix if settings.storage_provider == "s3" else "videos"
+    thumbnail_prefix = settings.s3_generated_thumbnail_prefix if settings.storage_provider == "s3" else "thumbnails"
     return OpenAIVideoGenerationProvider(
         api_key=settings.openai_api_key,
         model=settings.openai_video_model,
@@ -263,7 +272,9 @@ def build_openai_video_generation_provider(settings: Settings) -> OpenAIVideoGen
         seconds=settings.openai_video_seconds,
         poll_interval_seconds=settings.openai_video_poll_interval_seconds,
         max_wait_seconds=settings.openai_video_max_wait_seconds,
-        generated_media_dir=settings.generated_media_dir,
+        storage=build_storage_service(settings),
+        video_prefix=video_prefix,
+        thumbnail_prefix=thumbnail_prefix,
     )
 
 
@@ -342,30 +353,31 @@ def safe_generated_filename(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_.-]", "_", value).strip("._") or "video"
 
 
-def to_generated_public_path(generated_media_dir: Path, file_path: Path) -> str:
-    relative_path = file_path.relative_to(generated_media_dir)
-    return f"/generated/{relative_path.as_posix()}"
-
-
-def write_binary_response_to_file(content: object, output_path: Path) -> None:
+def read_binary_response(content: object) -> bytes:
     if hasattr(content, "write_to_file"):
-        content.write_to_file(str(output_path))
-        return
+        with tempfile.NamedTemporaryFile() as file:
+            content.write_to_file(file.name)
+            return file.read()
 
     if isinstance(content, (bytes, bytearray)):
-        output_path.write_bytes(bytes(content))
-        return
+        return bytes(content)
 
     response_content = getattr(content, "content", None)
     if isinstance(response_content, (bytes, bytearray)):
-        output_path.write_bytes(bytes(response_content))
-        return
+        return bytes(response_content)
 
     if hasattr(content, "read"):
-        output_path.write_bytes(content.read())
-        return
+        return content.read()
 
-    raise VideoGenerationProviderError("OpenAI 영상 다운로드 응답을 파일로 저장할 수 없습니다.")
+    raise VideoGenerationProviderError("OpenAI 영상 다운로드 응답을 bytes로 변환할 수 없습니다.")
+
+
+def content_type_for_extension(extension: str) -> str:
+    if extension == "mp4":
+        return "video/mp4"
+    if extension == "webp":
+        return "image/webp"
+    return "application/octet-stream"
 
 
 def openai_video_error_message(video: object) -> str:

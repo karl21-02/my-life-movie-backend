@@ -14,6 +14,7 @@ from app.services.video_generation_provider import (
     build_openai_video_prompt,
     build_video_generation_provider,
 )
+from app.services.storage_service import LocalStorageService
 
 
 pytestmark = pytest.mark.unit
@@ -142,7 +143,9 @@ def test_openai_video_generation_provider_polls_downloads_and_returns_static_pat
         seconds="4",
         poll_interval_seconds=0,
         max_wait_seconds=1,
-        generated_media_dir=str(tmp_path / "generated"),
+        storage=LocalStorageService(root_dir=str(tmp_path / "generated"), public_base_url="/generated"),
+        video_prefix="videos",
+        thumbnail_prefix="thumbnails",
         client=client,
     )
 
@@ -210,5 +213,7 @@ def test_openai_video_generation_provider_requires_api_key():
             seconds="4",
             poll_interval_seconds=0,
             max_wait_seconds=1,
-            generated_media_dir="generated",
+            storage=LocalStorageService(root_dir="generated", public_base_url="/generated"),
+            video_prefix="videos",
+            thumbnail_prefix="thumbnails",
         )
