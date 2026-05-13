@@ -46,6 +46,7 @@ class DownloadMovieResponse(BaseModel):
     movie_id: int
     title: str
     output_url: str | None = None
+    download_url: str | None = None
 
 
 class ShareMovieResponse(BaseModel):

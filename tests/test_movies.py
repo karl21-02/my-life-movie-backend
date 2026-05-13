@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from sqlalchemy.orm import Session
 
 from app.models.movie import Movie, MovieStatus
@@ -108,7 +110,8 @@ def test_get_movie_returns_detail(api_client, db_session: Session, mock_user: Ac
     assert body["status"] == "COMPLETED"
     assert body["output_url"] == "/generated/videos/video_123.mp4"
     assert isinstance(body["ost"], list)
-    assert isinstance(body["similar_movies"], list)
+    assert len(body["similar_movies"]) > 0
+    assert body["similar_movies"][0]["title"] == "브렉퍼스트 클럽"
 
 
 def test_get_movie_not_found_returns_problem_detail(api_client):
@@ -149,7 +152,25 @@ def test_download_movie_returns_info(api_client, db_session: Session, mock_user:
     assert body["movie_id"] == movie.id
     assert body["title"] == "나의 실제 생성 영화"
     assert body["output_url"] == "/generated/videos/video_123.mp4"
+    assert body["download_url"] == f"/api/movies/{movie.id}/download/file"
     assert "message" in body
+
+
+def test_download_movie_file_returns_attachment(api_client, db_session: Session, mock_user: AccessTokenClaims):
+    movie = create_completed_movie(db_session, user_id=mock_user.user_id)
+    file_path = Path("generated/videos/video_123.mp4")
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_bytes(b"movie-content")
+
+    try:
+        response = api_client.get(f"/api/movies/{movie.id}/download/file")
+    finally:
+        file_path.unlink(missing_ok=True)
+
+    assert response.status_code == 200
+    assert response.content == b"movie-content"
+    assert response.headers["content-type"].startswith("video/mp4")
+    assert "attachment" in response.headers["content-disposition"]
 
 
 def test_download_movie_not_found_returns_problem_detail(api_client):

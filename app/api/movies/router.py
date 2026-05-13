@@ -1,6 +1,9 @@
 import uuid
+from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.movies import schemas
@@ -9,7 +12,7 @@ from app.core.deps import get_current_user
 from app.core.errors import AppError
 from app.db.session import get_db_session
 from app.models.movie import Movie
-from app.models.video_generation_job import VideoGenerationJob
+from app.models.video_generation_job import VideoGenerationJob, VideoGenerationJobStatus
 from app.repositories.movie_repository import SQLAlchemyMovieRepository
 from app.repositories.video_generation_job_repository import SQLAlchemyVideoGenerationJobRepository
 from app.schemas.movie import (
@@ -358,11 +361,39 @@ async def download_movie(
     movie = _get_movie_or_403(movie_repo, movie_id, current_user.user_id)
     latest_job = job_repo.get_latest_by_movie_id(movie.id)
     title = build_movie_title(movie)
+    output_url = latest_job.output_url if latest_job is not None else None
     return schemas.DownloadMovieResponse(
         message=f"{title} 다운로드가 준비되었습니다.",
         movie_id=movie.id,
         title=title,
-        output_url=latest_job.output_url if latest_job is not None else None,
+        output_url=output_url,
+        download_url=build_movie_download_url(movie.id, output_url),
+    )
+
+
+@router.get("/{movie_id}/download/file")
+async def download_movie_file(
+    movie_id: int,
+    db: Session = Depends(get_db_session),
+    current_user: AccessTokenClaims = Depends(get_current_user),
+) -> FileResponse:
+    """현재 사용자의 생성 완료 영화를 실제 파일로 다운로드합니다."""
+    movie_repo = SQLAlchemyMovieRepository(db)
+    job_repo = SQLAlchemyVideoGenerationJobRepository(db)
+    movie = _get_movie_or_403(movie_repo, movie_id, current_user.user_id)
+    latest_job = get_download_ready_job(job_repo, movie.id)
+    settings = get_settings()
+    file_path = resolve_local_generated_file_path(
+        latest_job.output_url or "",
+        local_storage_dir=settings.local_storage_dir,
+        local_public_base_url=settings.local_public_base_url,
+    )
+    title = build_movie_title(movie)
+    return FileResponse(
+        path=file_path,
+        media_type="video/mp4",
+        filename=build_download_filename(title, file_path.suffix),
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -420,6 +451,81 @@ def build_movie_summary(
     )
 
 
+def get_download_ready_job(
+    job_repo: SQLAlchemyVideoGenerationJobRepository,
+    movie_id: int,
+) -> VideoGenerationJob:
+    latest_job = job_repo.get_latest_by_movie_id(movie_id)
+    if latest_job is None or latest_job.status != VideoGenerationJobStatus.SUCCEEDED or not latest_job.output_url:
+        raise AppError(
+            status_code=409,
+            code="MOVIE_DOWNLOAD_NOT_READY",
+            title="Movie Download Not Ready",
+            detail="아직 다운로드할 수 있는 생성 완료 영화가 없습니다.",
+            type_="movie_download_not_ready",
+        )
+    return latest_job
+
+
+def resolve_local_generated_file_path(
+    output_url: str,
+    *,
+    local_storage_dir: str,
+    local_public_base_url: str,
+) -> Path:
+    parsed_url = urlparse(output_url)
+    public_base_path = "/" + local_public_base_url.strip("/")
+    output_path = unquote(parsed_url.path)
+    if not output_path.startswith(f"{public_base_path}/"):
+        raise AppError(
+            status_code=422,
+            code="MOVIE_DOWNLOAD_UNSUPPORTED_URL",
+            title="Movie Download Unsupported URL",
+            detail="현재 저장소에서 직접 다운로드할 수 없는 영화 URL입니다.",
+            type_="movie_download_unsupported_url",
+        )
+
+    relative_path = output_path.removeprefix(f"{public_base_path}/")
+    storage_root = Path(local_storage_dir).resolve()
+    file_path = (storage_root / relative_path).resolve()
+    if storage_root not in file_path.parents:
+        raise AppError(
+            status_code=400,
+            code="INVALID_DOWNLOAD_PATH",
+            title="Invalid Download Path",
+            detail="다운로드 파일 경로가 올바르지 않습니다.",
+            type_="invalid_download_path",
+        )
+    if not file_path.is_file():
+        raise AppError(
+            status_code=404,
+            code="MOVIE_DOWNLOAD_FILE_NOT_FOUND",
+            title="Movie Download File Not Found",
+            detail="생성된 영화 파일을 찾을 수 없습니다.",
+            type_="movie_download_file_not_found",
+        )
+    return file_path
+
+
+def build_movie_download_url(movie_id: int, output_url: str | None) -> str | None:
+    if not output_url:
+        return None
+
+    local_public_base_path = "/" + get_settings().local_public_base_url.strip("/")
+    if urlparse(output_url).path.startswith(f"{local_public_base_path}/"):
+        return f"/api/movies/{movie_id}/download/file"
+    return output_url
+
+
+def build_download_filename(title: str, extension: str) -> str:
+    safe_title = "".join(
+        character if character.isalnum() or character in {" ", "-", "_"} else "_"
+        for character in title
+    ).strip()
+    normalized_extension = extension if extension.startswith(".") else f".{extension}"
+    return f"{safe_title or 'my-life-movie'}{normalized_extension or '.mp4'}"
+
+
 def build_movie_detail(
     movie: Movie,
     latest_job: VideoGenerationJob | None,
@@ -436,7 +542,7 @@ def build_movie_detail(
         output_url=summary.output_url,
         thumbnail_url=summary.thumbnail_url,
         ost=build_movie_ost(movie),
-        similar_movies=[],
+        similar_movies=build_similar_movies(summary.genre),
     )
 
 
