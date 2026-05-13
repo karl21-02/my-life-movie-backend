@@ -106,14 +106,16 @@ docker compose up --build
 
 ### 영상 생성 provider
 
-로컬 기본값은 `VIDEO_GENERATION_PROVIDER=auto`입니다. `FAL_KEY`가 비어 있으면 mock provider로 동작하고, `FAL_KEY`를 넣으면 fal.ai queue API로 실제 영상을 생성합니다.
+로컬 기본값은 `VIDEO_GENERATION_PROVIDER=auto`입니다. `OPENAI_API_KEY`가 있으면 OpenAI 영상 provider를 우선 사용하고, OpenAI 키가 없고 `FAL_KEY`가 있으면 fal.ai queue API를 사용합니다. 두 키가 모두 비어 있으면 mock provider로 동작합니다.
 
 ```env
 VIDEO_GENERATION_PROVIDER=auto
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_VIDEO_MODEL=sora-2
+OPENAI_VIDEO_SIZE=1280x720
+OPENAI_VIDEO_SECONDS=4
 FAL_KEY=your-fal-api-key
 FAL_MODEL_ID=fal-ai/wan-alpha
-FAL_POLL_INTERVAL_SECONDS=5
-FAL_MAX_WAIT_SECONDS=900
 ```
 
 worker는 Docker Compose에서 `my-life-movie-video-worker` 서비스로 실행됩니다. 수동 실행이 필요하면 다음 명령을 사용합니다.
@@ -128,6 +130,24 @@ uv run python -m app.workers.video_generation_worker
 2. `POST /api/movies/{movie_id}/chat`
 3. `POST /api/movies/{movie_id}/generate`
 4. `GET /api/movies/{movie_id}/generation`
+
+### 생성 영상 저장소
+
+개발 기본값은 로컬 저장소입니다. 생성된 영상은 `generated/videos`, 썸네일은 `generated/thumbnails`에 저장되고, 다운로드는 백엔드의 `/api/movies/{movie_id}/download/file` 응답을 통해 처리합니다.
+
+운영에서는 `STORAGE_PROVIDER=s3`를 사용합니다. 이 경우 생성 결과는 S3에 저장되고, 다운로드 요청 시 백엔드는 파일을 직접 스트리밍하지 않고 짧은 만료 시간을 가진 presigned GET URL을 발급합니다. 대용량 영상 다운로드 트래픽은 백엔드가 아니라 S3 또는 CloudFront가 담당합니다.
+
+```env
+STORAGE_PROVIDER=s3
+AWS_REGION=ap-northeast-2
+S3_BUCKET_NAME=your-generated-media-bucket
+S3_PUBLIC_BASE_URL=https://cdn.example.com
+S3_GENERATED_VIDEO_PREFIX=generated/videos
+S3_GENERATED_THUMBNAIL_PREFIX=generated/thumbnails
+S3_PRESIGNED_URL_EXPIRE_SECONDS=900
+```
+
+로컬 개발에서 IAM role을 쓰지 않는 경우에만 `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`를 설정합니다. 실제 키는 저장소에 커밋하지 않습니다.
 
 ### DB 마이그레이션
 
