@@ -28,6 +28,7 @@ coverage.xml
 # Runtime and local data
 *.log
 logs/
+generated/
 *.sqlite
 *.sqlite3
 *.db

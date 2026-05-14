@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from app.schemas.theme import Theme
 
-router = APIRouter(prefix="/api/v1/themes", tags=["themes"])
+router = APIRouter(prefix="/api/v1/themes", tags=["테마"])
 
 # 영화 테마 목록
 THEMES = [
@@ -14,7 +14,12 @@ THEMES = [
 ]
 
 
-@router.get("", response_model=list[Theme])
+@router.get(
+    "",
+    response_model=list[Theme],
+    summary="영화 테마 목록 조회",
+    description="영화 생성에 사용할 수 있는 테마 목록을 반환합니다.",
+)
 async def get_themes():
     """영화 테마 목록 6개를 반환합니다. (하이틴, 사이버펑크, 무성영화, 동화, 재패니즈 노스탤지아, 지브리)"""
     return THEMES

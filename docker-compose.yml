@@ -6,40 +6,135 @@ services:
       context: .
       target: runtime
     command:
-      - uv
-      - run
-      - uvicorn
+      - /app/.venv/bin/uvicorn
       - app.main:app
       - --host
       - 0.0.0.0
       - --port
       - "8000"
       - --reload
+      - --reload-dir
+      - app
     environment:
+      UV_HTTP_TIMEOUT: ${UV_HTTP_TIMEOUT:-120}
+      UV_LINK_MODE: copy
       APP_ENV: local
       LOG_LEVEL: DEBUG
-      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,http://localhost:3002,http://127.0.0.1:3002
       DATABASE_URL: mysql+pymysql://${MYSQL_USER:-my_life_movie}:${MYSQL_PASSWORD:-my_life_movie_password}@my-life-movie-mysql:3306/${MYSQL_DATABASE:-my_life_movie}
       REDIS_URL: redis://my-life-movie-redis:6379/0
       REFRESH_TOKEN_STORE: redis
       REFRESH_TOKEN_REDIS_RETENTION_SECONDS: ${REFRESH_TOKEN_REDIS_RETENTION_SECONDS:-86400}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
+      SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
+      VIDEO_GENERATION_PROVIDER: ${VIDEO_GENERATION_PROVIDER:-auto}
+      GENERATED_MEDIA_DIR: ${GENERATED_MEDIA_DIR:-generated}
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      LOCAL_STORAGE_DIR: ${LOCAL_STORAGE_DIR:-generated}
+      LOCAL_PUBLIC_BASE_URL: ${LOCAL_PUBLIC_BASE_URL:-/generated}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_GENERATED_VIDEO_PREFIX: ${S3_GENERATED_VIDEO_PREFIX:-generated/videos}
+      S3_GENERATED_THUMBNAIL_PREFIX: ${S3_GENERATED_THUMBNAIL_PREFIX:-generated/thumbnails}
+      S3_MUSIC_PREFIX: ${S3_MUSIC_PREFIX:-music}
+      S3_PRESIGNED_URL_EXPIRE_SECONDS: ${S3_PRESIGNED_URL_EXPIRE_SECONDS:-900}
+      TMDB_ACCESS_TOKEN: ${TMDB_ACCESS_TOKEN:-}
+      TMDB_API_BASE_URL: ${TMDB_API_BASE_URL:-https://api.themoviedb.org/3}
+      TMDB_IMAGE_BASE_URL: ${TMDB_IMAGE_BASE_URL:-https://image.tmdb.org/t/p}
+      TMDB_POSTER_SIZE: ${TMDB_POSTER_SIZE:-w500}
+      TMDB_LANGUAGE: ${TMDB_LANGUAGE:-ko-KR}
+      TMDB_TIMEOUT_SECONDS: ${TMDB_TIMEOUT_SECONDS:-5}
+      OPENAI_VIDEO_MODEL: ${OPENAI_VIDEO_MODEL:-sora-2}
+      OPENAI_VIDEO_SIZE: ${OPENAI_VIDEO_SIZE:-1280x720}
+      OPENAI_VIDEO_SECONDS: ${OPENAI_VIDEO_SECONDS:-8}
+      OPENAI_VIDEO_POLL_INTERVAL_SECONDS: ${OPENAI_VIDEO_POLL_INTERVAL_SECONDS:-5}
+      OPENAI_VIDEO_MAX_WAIT_SECONDS: ${OPENAI_VIDEO_MAX_WAIT_SECONDS:-900}
+      FAL_KEY: ${FAL_KEY:-}
+      FAL_MODEL_ID: ${FAL_MODEL_ID:-fal-ai/wan-alpha}
+      FAL_QUEUE_BASE_URL: ${FAL_QUEUE_BASE_URL:-https://queue.fal.run}
+      FAL_POLL_INTERVAL_SECONDS: ${FAL_POLL_INTERVAL_SECONDS:-5}
+      FAL_MAX_WAIT_SECONDS: ${FAL_MAX_WAIT_SECONDS:-900}
     ports:
       - "8000:8000"
     volumes:
       - .:/app
-      - my-life-movie-backend-venv:/app/.venv
+      - my-life-movie-backend-api-runtime-venv:/app/.venv
     healthcheck:
       test:
         - CMD
-        - uv
-        - run
-        - python
+        - /app/.venv/bin/python
         - -c
         - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
       interval: 10s
       timeout: 3s
       retries: 5
       start_period: 10s
+    depends_on:
+      my-life-movie-mysql:
+        condition: service_healthy
+      my-life-movie-redis:
+        condition: service_healthy
+
+  my-life-movie-video-worker:
+    build:
+      context: .
+      target: runtime
+    command:
+      - /app/.venv/bin/python
+      - -m
+      - app.workers.video_generation_worker
+    environment:
+      UV_HTTP_TIMEOUT: ${UV_HTTP_TIMEOUT:-120}
+      UV_LINK_MODE: copy
+      APP_ENV: local
+      LOG_LEVEL: DEBUG
+      DATABASE_URL: mysql+pymysql://${MYSQL_USER:-my_life_movie}:${MYSQL_PASSWORD:-my_life_movie_password}@my-life-movie-mysql:3306/${MYSQL_DATABASE:-my_life_movie}
+      REDIS_URL: redis://my-life-movie-redis:6379/0
+      REFRESH_TOKEN_STORE: redis
+      REFRESH_TOKEN_REDIS_RETENTION_SECONDS: ${REFRESH_TOKEN_REDIS_RETENTION_SECONDS:-86400}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      VIDEO_GENERATION_PROVIDER: ${VIDEO_GENERATION_PROVIDER:-auto}
+      GENERATED_MEDIA_DIR: ${GENERATED_MEDIA_DIR:-generated}
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      LOCAL_STORAGE_DIR: ${LOCAL_STORAGE_DIR:-generated}
+      LOCAL_PUBLIC_BASE_URL: ${LOCAL_PUBLIC_BASE_URL:-/generated}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_GENERATED_VIDEO_PREFIX: ${S3_GENERATED_VIDEO_PREFIX:-generated/videos}
+      S3_GENERATED_THUMBNAIL_PREFIX: ${S3_GENERATED_THUMBNAIL_PREFIX:-generated/thumbnails}
+      S3_MUSIC_PREFIX: ${S3_MUSIC_PREFIX:-music}
+      S3_PRESIGNED_URL_EXPIRE_SECONDS: ${S3_PRESIGNED_URL_EXPIRE_SECONDS:-900}
+      TMDB_ACCESS_TOKEN: ${TMDB_ACCESS_TOKEN:-}
+      TMDB_API_BASE_URL: ${TMDB_API_BASE_URL:-https://api.themoviedb.org/3}
+      TMDB_IMAGE_BASE_URL: ${TMDB_IMAGE_BASE_URL:-https://image.tmdb.org/t/p}
+      TMDB_POSTER_SIZE: ${TMDB_POSTER_SIZE:-w500}
+      TMDB_LANGUAGE: ${TMDB_LANGUAGE:-ko-KR}
+      TMDB_TIMEOUT_SECONDS: ${TMDB_TIMEOUT_SECONDS:-5}
+      OPENAI_VIDEO_MODEL: ${OPENAI_VIDEO_MODEL:-sora-2}
+      OPENAI_VIDEO_SIZE: ${OPENAI_VIDEO_SIZE:-1280x720}
+      OPENAI_VIDEO_SECONDS: ${OPENAI_VIDEO_SECONDS:-8}
+      OPENAI_VIDEO_POLL_INTERVAL_SECONDS: ${OPENAI_VIDEO_POLL_INTERVAL_SECONDS:-5}
+      OPENAI_VIDEO_MAX_WAIT_SECONDS: ${OPENAI_VIDEO_MAX_WAIT_SECONDS:-900}
+      FAL_KEY: ${FAL_KEY:-}
+      FAL_MODEL_ID: ${FAL_MODEL_ID:-fal-ai/wan-alpha}
+      FAL_QUEUE_BASE_URL: ${FAL_QUEUE_BASE_URL:-https://queue.fal.run}
+      FAL_POLL_INTERVAL_SECONDS: ${FAL_POLL_INTERVAL_SECONDS:-5}
+      FAL_MAX_WAIT_SECONDS: ${FAL_MAX_WAIT_SECONDS:-900}
+      VIDEO_GENERATION_WORKER_POLL_INTERVAL_SECONDS: ${VIDEO_GENERATION_WORKER_POLL_INTERVAL_SECONDS:-5}
+    volumes:
+      - .:/app
+      - my-life-movie-backend-worker-runtime-venv:/app/.venv
     depends_on:
       my-life-movie-mysql:
         condition: service_healthy
@@ -83,6 +178,7 @@ services:
       start_period: 5s
 
 volumes:
-  my-life-movie-backend-venv:
+  my-life-movie-backend-api-runtime-venv:
+  my-life-movie-backend-worker-runtime-venv:
   my-life-movie-mysql-data:
   my-life-movie-redis-data:

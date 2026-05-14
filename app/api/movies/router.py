@@ -1,14 +1,26 @@
 import uuid
+from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from app.api.movies import schemas, service
+from app.api.movies import schemas
 from app.core.config import get_settings
 from app.core.deps import get_current_user
+from app.core.errors import AppError
+from app.core.openapi import (
+    GENERATION_REQUEST_PROBLEM_RESPONSES,
+    GENERATION_STATUS_PROBLEM_RESPONSES,
+    MOVIE_PROBLEM_RESPONSES,
+)
 from app.db.session import get_db_session
-from app.models.movie import MovieStatus
+from app.models.movie import Movie
+from app.models.video_generation_job import VideoGenerationJob, VideoGenerationJobStatus
 from app.repositories.movie_repository import SQLAlchemyMovieRepository
+from app.repositories.movie_recommendation_repository import SQLAlchemyMovieRecommendationRepository
+from app.repositories.video_generation_job_repository import SQLAlchemyVideoGenerationJobRepository
 from app.schemas.movie import (
     CreateDraftRequest,
     CreateDraftResponse,
@@ -16,27 +28,62 @@ from app.schemas.movie import (
     ChatRequest,
     ChatResponse,
     FileUploadResponse,
+    GenerationRequestResponse,
+    GenerationStatusResponse,
     SummaryResponse,
 )
 from app.services.access_token_service import AccessTokenClaims
 from app.services.story_generation_service import generate_story_inputs
+from app.services.video_generation_provider import resolve_video_generation_provider_name
+from app.services.video_generation_service import VideoGenerationService
+from app.services.storage_service import build_storage_service
+from app.services.movie_recommendation_service import build_movie_recommendation_service
 
-router = APIRouter(prefix="/api/movies", tags=["movies"])
+router = APIRouter(prefix="/api/movies", tags=["영화"])
+MOVIE_LIST_PROBLEM_RESPONSES = {
+    401: MOVIE_PROBLEM_RESPONSES[401],
+    422: MOVIE_PROBLEM_RESPONSES[422],
+    500: MOVIE_PROBLEM_RESPONSES[500],
+}
 
 # 파일 업로드 시 허용되는 확장자 목록 (소문자 기준)
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf", ".txt", ".mp4", ".mov"}
-
+THEME_NAMES = {
+    1: "하이틴",
+    2: "사이버펑크",
+    3: "무성영화",
+    4: "동화",
+    5: "재패니즈 노스탤지아",
+    6: "지브리",
+}
 # 영화 조회 시 존재 여부와 소유자 권한을 확인하는 헬퍼 함수
 def _get_movie_or_403(repo: SQLAlchemyMovieRepository, movie_id: int, user_id: int):
     movie = repo.get_by_id(movie_id)
     if movie is None:
-        raise HTTPException(status_code=404, detail="Movie not found")
+        raise AppError(
+            status_code=404,
+            code="MOVIE_NOT_FOUND",
+            title="Movie Not Found",
+            detail="영화를 찾을 수 없습니다.",
+            type_="movie_not_found",
+        )
     if movie.user_id != user_id:
-        raise HTTPException(status_code=403, detail="접근 권한이 없습니다.")
+        raise AppError(
+            status_code=403,
+            code="MOVIE_FORBIDDEN",
+            title="Movie Forbidden",
+            detail="해당 영화에 접근할 권한이 없습니다.",
+            type_="movie_forbidden",
+        )
     return movie
 
 
-@router.post("/draft", response_model=CreateDraftResponse)
+@router.post(
+    "/draft",
+    response_model=CreateDraftResponse,
+    summary="영화 초안 생성",
+    description="테마를 선택해 영화 제작 초안을 생성하고 이후 단계에서 사용할 movie_id를 반환합니다.",
+)
 async def create_draft(
     request: CreateDraftRequest,
     db: Session = Depends(get_db_session),
@@ -48,7 +95,11 @@ async def create_draft(
     return CreateDraftResponse(movie_id=movie.id, status=movie.status.value)
 
 
-@router.put("/{movie_id}/music")
+@router.put(
+    "/{movie_id}/music",
+    summary="영화 음악 선택",
+    description="현재 사용자의 특정 영화에 선택한 음악 ID를 저장합니다.",
+)
 async def update_music(
     movie_id: int,
     request: UpdateMusicRequest,
@@ -63,7 +114,12 @@ async def update_music(
     return {"movie_id": movie.id, "music_id": movie.music_id}
 
 
-@router.post("/{movie_id}/files", response_model=FileUploadResponse)
+@router.post(
+    "/{movie_id}/files",
+    response_model=FileUploadResponse,
+    summary="영화 참고 파일 업로드",
+    description="영화 생성에 참고할 사진, 영상, 문서 파일 메타데이터를 영화에 저장합니다.",
+)
 async def upload_file(
     movie_id: int,
     file: UploadFile = File(...),
@@ -96,7 +152,15 @@ async def upload_file(
     return FileUploadResponse(**file_info)
 
 
-@router.post("/{movie_id}/chat", response_model=ChatResponse)
+@router.post(
+    "/{movie_id}/chat",
+    response_model=ChatResponse,
+    summary="AI 이야기 대화",
+    description=(
+        "사용자 메시지를 기반으로 AI 역질문, 이야기 초안, 영상 생성용 story brief, "
+        "scene plan, generation prompt를 갱신합니다."
+    ),
+)
 async def chat_prompt(
     movie_id: int,
     request: ChatRequest,
@@ -132,7 +196,11 @@ async def chat_prompt(
     )
 
 
-@router.get("/{movie_id}/chat")
+@router.get(
+    "/{movie_id}/chat",
+    summary="AI 대화 이력 조회",
+    description="현재 사용자의 특정 영화에 저장된 AI 대화 이력을 반환합니다.",
+)
 async def get_chat_history(
     movie_id: int,
     db: Session = Depends(get_db_session),
@@ -144,7 +212,12 @@ async def get_chat_history(
     return {"history": movie.chat_history or []}
 
 
-@router.get("/{movie_id}/summary", response_model=SummaryResponse)
+@router.get(
+    "/{movie_id}/summary",
+    response_model=SummaryResponse,
+    summary="영화 생성 입력 요약 조회",
+    description="최종 확인 화면에서 사용할 프롬프트, 파일, 테마, 음악, 구조화 스토리 정보를 반환합니다.",
+)
 async def get_summary(
     movie_id: int,
     db: Session = Depends(get_db_session),
@@ -164,58 +237,480 @@ async def get_summary(
     )
 
 
-@router.post("/{movie_id}/generate")
+def _get_video_generation_service(db: Session) -> VideoGenerationService:
+    settings = get_settings()
+    return VideoGenerationService(
+        movie_repository=SQLAlchemyMovieRepository(db),
+        job_repository=SQLAlchemyVideoGenerationJobRepository(db),
+        provider_name=resolve_video_generation_provider_name(settings),
+    )
+
+
+@router.get(
+    "/{movie_id}/generation",
+    response_model=GenerationStatusResponse,
+    summary="영상 생성 상태 조회",
+    description=(
+        "현재 사용자의 특정 영화에 대해 가장 최근 영상 생성 Job 상태를 조회합니다. "
+        "`status`는 `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELED` 중 하나이며, "
+        "`progress`는 0~100 사이의 근사 진행률입니다."
+    ),
+    responses=GENERATION_STATUS_PROBLEM_RESPONSES,
+)
+async def get_generation_status(
+    movie_id: int,
+    db: Session = Depends(get_db_session),
+    current_user: AccessTokenClaims = Depends(get_current_user),
+):
+    """최신 영상 생성 Job 상태를 조회합니다."""
+    job = _get_video_generation_service(db).get_latest_generation(
+        movie_id=movie_id,
+        user_id=current_user.user_id,
+    )
+    return GenerationStatusResponse(
+        movie_id=job.movie_id,
+        job_id=job.id,
+        status=job.status.value,
+        progress=job.progress,
+        output_url=job.output_url,
+        thumbnail_url=job.thumbnail_url,
+        error_code=job.error_code,
+        error_message=job.error_message,
+    )
+
+
+@router.post(
+    "/{movie_id}/generate",
+    response_model=GenerationRequestResponse,
+    summary="영상 생성 요청",
+    description=(
+        "구조화된 이야기 입력과 generation prompt를 기준으로 비동기 영상 생성 Job을 생성합니다. "
+        "요청 성공 시 `QUEUED` 상태를 반환하며, 실제 provider 처리는 worker가 수행합니다."
+    ),
+    responses=GENERATION_REQUEST_PROBLEM_RESPONSES,
+)
 async def generate_movie(
     movie_id: int,
     db: Session = Depends(get_db_session),
     current_user: AccessTokenClaims = Depends(get_current_user),
 ):
-    """영화 생성을 시작합니다. 상태가 GENERATING으로 변경됩니다."""
-    repo = SQLAlchemyMovieRepository(db)
-    movie = _get_movie_or_403(repo, movie_id, current_user.user_id)
-    movie.status = MovieStatus.GENERATING
-    repo.update(movie)
-    return {"movie_id": movie.id, "status": movie.status.value, "message": "영화 생성이 시작되었습니다."}
+    """영상 생성 Job을 생성하고 QUEUED 상태로 반환합니다."""
+    result = _get_video_generation_service(db).request_generation(
+        movie_id=movie_id,
+        user_id=current_user.user_id,
+    )
+    return GenerationRequestResponse(
+        movie_id=result.job.movie_id,
+        job_id=result.job.id,
+        status=result.job.status.value,
+        progress=result.job.progress,
+        message="영상 생성 요청이 접수되었습니다.",
+    )
 
 
-@router.get("", response_model=list[schemas.MovieSummary])
-async def get_movies() -> list[schemas.MovieSummary]:
-    """영화 목록을 반환한다."""
-    return service.list_movies()
+@router.post(
+    "/{movie_id}/generation/cancel",
+    response_model=GenerationStatusResponse,
+    summary="영상 생성 취소",
+    description="현재 진행 중인 영상 생성 Job을 취소하고 영화 상태를 초안 상태로 되돌립니다.",
+    responses=GENERATION_STATUS_PROBLEM_RESPONSES,
+)
+async def cancel_generation(
+    movie_id: int,
+    db: Session = Depends(get_db_session),
+    current_user: AccessTokenClaims = Depends(get_current_user),
+):
+    """진행 중인 영상 생성 Job을 취소합니다."""
+    job = _get_video_generation_service(db).cancel_generation(
+        movie_id=movie_id,
+        user_id=current_user.user_id,
+    )
+    return GenerationStatusResponse(
+        movie_id=job.movie_id,
+        job_id=job.id,
+        status=job.status.value,
+        progress=job.progress,
+        output_url=job.output_url,
+        thumbnail_url=job.thumbnail_url,
+        error_code=job.error_code,
+        error_message=job.error_message,
+    )
 
 
-@router.get("/{movie_id}", response_model=schemas.Movie)
-async def get_movie(movie_id: int) -> schemas.Movie:
-    """특정 영화의 상세 정보를 반환한다."""
-    return service.get_movie(movie_id)
+@router.get(
+    "",
+    response_model=list[schemas.MovieSummary],
+    summary="내 영화 목록 조회",
+    description="현재 사용자가 생성한 영화 목록을 최신 생성 Job 상태와 함께 반환합니다.",
+    responses=MOVIE_LIST_PROBLEM_RESPONSES,
+)
+async def get_movies(
+    db: Session = Depends(get_db_session),
+    current_user: AccessTokenClaims = Depends(get_current_user),
+) -> list[schemas.MovieSummary]:
+    """현재 사용자의 실제 영화 목록을 반환합니다."""
+    movie_repo = SQLAlchemyMovieRepository(db)
+    job_repo = SQLAlchemyVideoGenerationJobRepository(db)
+    movies = movie_repo.list_by_user_id(current_user.user_id)
+    latest_jobs = job_repo.list_latest_by_movie_ids([movie.id for movie in movies])
+    return [
+        build_movie_summary(movie, latest_jobs.get(movie.id))
+        for movie in movies
+    ]
 
 
-@router.delete("/{movie_id}", response_model=schemas.DeleteMovieResponse)
-async def delete_movie(movie_id: int) -> schemas.DeleteMovieResponse:
-    """특정 영화를 삭제한다."""
-    service.delete_movie(movie_id)
+@router.get(
+    "/{movie_id}",
+    response_model=schemas.Movie,
+    summary="영화 상세 조회",
+    description="현재 사용자의 특정 영화 상세 정보와 저장된 유사 영화 추천 결과를 반환합니다.",
+    responses=MOVIE_PROBLEM_RESPONSES,
+)
+async def get_movie(
+    movie_id: int,
+    db: Session = Depends(get_db_session),
+    current_user: AccessTokenClaims = Depends(get_current_user),
+) -> schemas.Movie:
+    """현재 사용자의 특정 영화 상세 정보를 반환합니다."""
+    movie_repo = SQLAlchemyMovieRepository(db)
+    job_repo = SQLAlchemyVideoGenerationJobRepository(db)
+    recommendation_repo = SQLAlchemyMovieRecommendationRepository(db)
+    movie = _get_movie_or_403(movie_repo, movie_id, current_user.user_id)
+    return build_movie_detail(
+        movie,
+        job_repo.get_latest_by_movie_id(movie.id),
+        recommendation_repo,
+    )
+
+
+@router.delete(
+    "/{movie_id}",
+    response_model=schemas.DeleteMovieResponse,
+    summary="영화 삭제",
+    description="현재 사용자의 특정 영화와 연결된 생성 Job, 추천 결과를 함께 삭제합니다.",
+    responses=MOVIE_PROBLEM_RESPONSES,
+)
+async def delete_movie(
+    movie_id: int,
+    db: Session = Depends(get_db_session),
+    current_user: AccessTokenClaims = Depends(get_current_user),
+) -> schemas.DeleteMovieResponse:
+    """현재 사용자의 특정 영화를 삭제합니다."""
+    movie_repo = SQLAlchemyMovieRepository(db)
+    movie = _get_movie_or_403(movie_repo, movie_id, current_user.user_id)
+    movie_repo.delete(movie)
     return schemas.DeleteMovieResponse(message="영화가 삭제되었습니다.")
 
 
-@router.get("/{movie_id}/download", response_model=schemas.DownloadMovieResponse)
-async def download_movie(movie_id: int) -> schemas.DownloadMovieResponse:
-    """특정 영화의 다운로드 정보를 반환한다."""
-    movie = service.download_movie(movie_id)
+@router.get(
+    "/{movie_id}/download",
+    response_model=schemas.DownloadMovieResponse,
+    summary="영화 다운로드 정보 조회",
+    description="생성 완료된 영화의 다운로드 URL과 파일 정보를 반환합니다.",
+    responses=MOVIE_PROBLEM_RESPONSES,
+)
+async def download_movie(
+    movie_id: int,
+    db: Session = Depends(get_db_session),
+    current_user: AccessTokenClaims = Depends(get_current_user),
+) -> schemas.DownloadMovieResponse:
+    """현재 사용자의 특정 영화 다운로드 정보를 반환합니다."""
+    movie_repo = SQLAlchemyMovieRepository(db)
+    job_repo = SQLAlchemyVideoGenerationJobRepository(db)
+    movie = _get_movie_or_403(movie_repo, movie_id, current_user.user_id)
+    latest_job = job_repo.get_latest_by_movie_id(movie.id)
+    title = build_movie_title(movie)
+    output_url = latest_job.output_url if latest_job is not None else None
     return schemas.DownloadMovieResponse(
-        message=f"{movie.title} 다운로드가 준비되었습니다.",
+        message=f"{title} 다운로드가 준비되었습니다.",
         movie_id=movie.id,
-        title=movie.title,
+        title=title,
+        output_url=output_url,
+        download_url=build_movie_download_url(movie.id, output_url),
     )
 
 
-@router.post("/{movie_id}/share", response_model=schemas.ShareMovieResponse)
-async def share_movie(movie_id: int, request: Request) -> schemas.ShareMovieResponse:
-    """특정 영화의 공유 URL을 생성하여 반환한다."""
+@router.get(
+    "/{movie_id}/download/file",
+    summary="영화 파일 다운로드",
+    description="생성 완료된 영화 파일을 video/mp4 응답으로 다운로드합니다.",
+    responses=MOVIE_PROBLEM_RESPONSES,
+)
+async def download_movie_file(
+    movie_id: int,
+    db: Session = Depends(get_db_session),
+    current_user: AccessTokenClaims = Depends(get_current_user),
+) -> FileResponse:
+    """현재 사용자의 생성 완료 영화를 실제 파일로 다운로드합니다."""
+    movie_repo = SQLAlchemyMovieRepository(db)
+    job_repo = SQLAlchemyVideoGenerationJobRepository(db)
+    movie = _get_movie_or_403(movie_repo, movie_id, current_user.user_id)
+    latest_job = get_download_ready_job(job_repo, movie.id)
+    settings = get_settings()
+    file_path = resolve_local_generated_file_path(
+        latest_job.output_url or "",
+        local_storage_dir=settings.local_storage_dir,
+        local_public_base_url=settings.local_public_base_url,
+    )
+    title = build_movie_title(movie)
+    return FileResponse(
+        path=file_path,
+        media_type="video/mp4",
+        filename=build_download_filename(title, file_path.suffix),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post(
+    "/{movie_id}/share",
+    response_model=schemas.ShareMovieResponse,
+    summary="영화 공유 링크 생성",
+    description="현재 사용자의 특정 영화에 접근할 수 있는 공유 URL을 생성해 반환합니다.",
+    responses=MOVIE_PROBLEM_RESPONSES,
+)
+async def share_movie(
+    movie_id: int,
+    request: Request,
+    db: Session = Depends(get_db_session),
+    current_user: AccessTokenClaims = Depends(get_current_user),
+) -> schemas.ShareMovieResponse:
+    """현재 사용자의 특정 영화 공유 URL을 생성하여 반환합니다."""
+    movie_repo = SQLAlchemyMovieRepository(db)
+    movie = _get_movie_or_403(movie_repo, movie_id, current_user.user_id)
     base_url = str(request.base_url).rstrip("/")
-    movie, share_url = service.share_movie(movie_id, base_url)
+    title = build_movie_title(movie)
+    share_url = f"{base_url}/movies/{movie_id}"
     return schemas.ShareMovieResponse(
-        message=f"{movie.title} 공유 링크가 생성되었습니다.",
+        message=f"{title} 공유 링크가 생성되었습니다.",
         movie_id=movie.id,
-        title=movie.title,
+        title=title,
         share_url=share_url,
     )
+
+
+@router.get(
+    "/{movie_id}/similar",
+    response_model=schemas.SimilarMoviesResponse,
+    summary="유사 영화 추천 조회",
+    description="저장된 추천 결과가 있으면 재사용하고, 없으면 영화 입력 데이터를 기반으로 TMDB 유사 영화를 추천해 저장합니다.",
+    responses=MOVIE_PROBLEM_RESPONSES,
+)
+async def get_similar_movies(
+    movie_id: int,
+    db: Session = Depends(get_db_session),
+    current_user: AccessTokenClaims = Depends(get_current_user),
+) -> schemas.SimilarMoviesResponse:
+    """현재 사용자 영화의 입력 데이터 기반으로 유사한 영화 최대 4편을 추천합니다."""
+    movie_repo = SQLAlchemyMovieRepository(db)
+    recommendation_repo = SQLAlchemyMovieRecommendationRepository(db)
+    movie = _get_movie_or_403(movie_repo, movie_id, current_user.user_id)
+    genre = THEME_NAMES.get(movie.theme_id, "인생 영화")
+    return schemas.SimilarMoviesResponse(
+        movie_id=movie.id,
+        similar_movies=build_similar_movies(
+            movie=movie,
+            genre=genre,
+            recommendation_repo=recommendation_repo,
+        ),
+    )
+
+
+def build_movie_summary(
+    movie: Movie,
+    latest_job: VideoGenerationJob | None,
+) -> schemas.MovieSummary:
+    thumbnail_url = latest_job.thumbnail_url if latest_job is not None else None
+    output_url = latest_job.output_url if latest_job is not None else None
+    return schemas.MovieSummary(
+        id=movie.id,
+        title=build_movie_title(movie),
+        thumbnail=thumbnail_url or "",
+        genre=THEME_NAMES.get(movie.theme_id, "인생 영화"),
+        status=movie.status.value,
+        output_url=output_url,
+        thumbnail_url=thumbnail_url,
+    )
+
+
+def get_download_ready_job(
+    job_repo: SQLAlchemyVideoGenerationJobRepository,
+    movie_id: int,
+) -> VideoGenerationJob:
+    latest_job = job_repo.get_latest_by_movie_id(movie_id)
+    if latest_job is None or latest_job.status != VideoGenerationJobStatus.SUCCEEDED or not latest_job.output_url:
+        raise AppError(
+            status_code=409,
+            code="MOVIE_DOWNLOAD_NOT_READY",
+            title="Movie Download Not Ready",
+            detail="아직 다운로드할 수 있는 생성 완료 영화가 없습니다.",
+            type_="movie_download_not_ready",
+        )
+    return latest_job
+
+
+def resolve_local_generated_file_path(
+    output_url: str,
+    *,
+    local_storage_dir: str,
+    local_public_base_url: str,
+) -> Path:
+    parsed_url = urlparse(output_url)
+    public_base_path = "/" + local_public_base_url.strip("/")
+    output_path = unquote(parsed_url.path)
+    if not output_path.startswith(f"{public_base_path}/"):
+        raise AppError(
+            status_code=422,
+            code="MOVIE_DOWNLOAD_UNSUPPORTED_URL",
+            title="Movie Download Unsupported URL",
+            detail="현재 저장소에서 직접 다운로드할 수 없는 영화 URL입니다.",
+            type_="movie_download_unsupported_url",
+        )
+
+    relative_path = output_path.removeprefix(f"{public_base_path}/")
+    storage_root = Path(local_storage_dir).resolve()
+    file_path = (storage_root / relative_path).resolve()
+    if storage_root not in file_path.parents:
+        raise AppError(
+            status_code=400,
+            code="INVALID_DOWNLOAD_PATH",
+            title="Invalid Download Path",
+            detail="다운로드 파일 경로가 올바르지 않습니다.",
+            type_="invalid_download_path",
+        )
+    if not file_path.is_file():
+        raise AppError(
+            status_code=404,
+            code="MOVIE_DOWNLOAD_FILE_NOT_FOUND",
+            title="Movie Download File Not Found",
+            detail="생성된 영화 파일을 찾을 수 없습니다.",
+            type_="movie_download_file_not_found",
+        )
+    return file_path
+
+
+def build_movie_download_url(movie_id: int, output_url: str | None) -> str | None:
+    if not output_url:
+        return None
+
+    settings = get_settings()
+    local_public_base_path = "/" + settings.local_public_base_url.strip("/")
+    if settings.storage_provider == "local" and urlparse(output_url).path.startswith(f"{local_public_base_path}/"):
+        return f"/api/movies/{movie_id}/download/file"
+    if settings.storage_provider == "s3":
+        storage = build_storage_service(settings)
+        download = storage.create_presigned_download(
+            resolve_s3_object_key_from_output_url(
+                output_url,
+                public_base_url=settings.s3_public_base_url,
+            ),
+            expires_seconds=settings.s3_presigned_url_expire_seconds,
+        )
+        return download.url
+    return output_url
+
+
+def resolve_s3_object_key_from_output_url(output_url: str, *, public_base_url: str) -> str:
+    parsed_url = urlparse(output_url)
+    output_path = unquote(parsed_url.path).lstrip("/")
+    if public_base_url:
+        public_base_path = unquote(urlparse(public_base_url).path).strip("/")
+        if public_base_path and output_path.startswith(f"{public_base_path}/"):
+            return output_path.removeprefix(f"{public_base_path}/")
+    return output_path
+
+
+def build_download_filename(title: str, extension: str) -> str:
+    safe_title = "".join(
+        character if character.isalnum() or character in {" ", "-", "_"} else "_"
+        for character in title
+    ).strip()
+    normalized_extension = extension if extension.startswith(".") else f".{extension}"
+    return f"{safe_title or 'my-life-movie'}{normalized_extension or '.mp4'}"
+
+
+def build_movie_detail(
+    movie: Movie,
+    latest_job: VideoGenerationJob | None,
+    recommendation_repo: SQLAlchemyMovieRecommendationRepository | None = None,
+) -> schemas.Movie:
+    summary = build_movie_summary(movie, latest_job)
+    return schemas.Movie(
+        id=summary.id,
+        title=summary.title,
+        description=build_movie_description(movie),
+        thumbnail=summary.thumbnail,
+        genre=summary.genre,
+        sentiment=build_movie_sentiment(movie),
+        status=summary.status,
+        output_url=summary.output_url,
+        thumbnail_url=summary.thumbnail_url,
+        ost=build_movie_ost(movie),
+        similar_movies=build_similar_movies(
+            movie=movie,
+            genre=summary.genre,
+            recommendation_repo=recommendation_repo,
+        ),
+    )
+
+
+def build_movie_title(movie: Movie) -> str:
+    story_brief = movie.story_brief if isinstance(movie.story_brief, dict) else {}
+    for key in ("title", "movie_title"):
+        value = story_brief.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    if movie.current_draft:
+        first_line = movie.current_draft.strip().splitlines()[0]
+        if first_line:
+            return first_line[:40]
+
+    return f"내 인생 영화 #{movie.id}"
+
+
+def build_movie_description(movie: Movie) -> str:
+    if movie.current_draft and movie.current_draft.strip():
+        return movie.current_draft.strip()
+    if movie.generation_prompt and movie.generation_prompt.strip():
+        return movie.generation_prompt.strip()
+    return "아직 영화 시나리오를 준비 중입니다."
+
+
+def build_movie_sentiment(movie: Movie) -> str:
+    story_brief = movie.story_brief if isinstance(movie.story_brief, dict) else {}
+    for key in ("core_emotion", "emotion", "mood", "tone"):
+        value = story_brief.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "기록중"
+
+
+def build_movie_ost(movie: Movie) -> list[schemas.OstTrack]:
+    if movie.music_id is None:
+        return []
+    return [
+        schemas.OstTrack(
+            title=f"선택한 음악 #{movie.music_id}",
+            artist="My Life Movie",
+        )
+    ]
+
+
+def build_similar_movies(
+    *,
+    movie: Movie,
+    genre: str,
+    recommendation_repo: SQLAlchemyMovieRecommendationRepository | None = None,
+) -> list[schemas.SimilarMovie]:
+    service = build_movie_recommendation_service(get_settings())
+    service.recommendation_repository = recommendation_repo
+    return [
+        schemas.SimilarMovie(
+            id=movie.id,
+            title=movie.title,
+            thumbnail=movie.thumbnail,
+            external_url=movie.external_url,
+            provider=movie.provider,
+        )
+        for movie in service.get_or_create_for_movie(movie=movie, genre=genre)
+    ]

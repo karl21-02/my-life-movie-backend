@@ -1,22 +1,46 @@
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from app.schemas.music import MusicTrack
 
 
 def create_test_client() -> TestClient:
     return TestClient(create_app())
 
 
-def test_get_music_by_theme_returns_tracks():
+def test_get_music_by_theme_returns_playable_tracks(monkeypatch):
+    async def fake_search_deezer_tracks(query, *, limit=5, is_ai_recommended=True):
+        return [
+            MusicTrack(
+                music_id=3001,
+                title="Playable Preview",
+                file_url="https://cdns-preview.test/music.mp3",
+                is_ai_recommended=is_ai_recommended,
+                artist="Preview Artist",
+                provider="deezer",
+                provider_track_id="3001",
+                external_url="https://www.deezer.com/track/3001",
+            )
+        ]
+
+    monkeypatch.setattr("app.routers.music._search_deezer_tracks", fake_search_deezer_tracks)
+
     response = create_test_client().get("/api/v1/music?theme_id=1")
 
     assert response.status_code == 200
     body = response.json()
     assert "default_tracks" in body
     assert len(body["default_tracks"]) > 0
+    assert body["default_tracks"][0]["file_url"].startswith("https://")
+    assert body["default_tracks"][0]["provider"] == "deezer"
 
 
-def test_get_music_track_contains_required_fields():
+def test_get_music_track_contains_required_fields(monkeypatch):
+    async def fake_search_deezer_tracks(query, *, limit=5, is_ai_recommended=True):
+        return []
+
+    monkeypatch.setattr("app.routers.music._search_deezer_tracks", fake_search_deezer_tracks)
+
     response = create_test_client().get("/api/v1/music?theme_id=1")
 
     track = response.json()["default_tracks"][0]
@@ -32,10 +56,31 @@ def test_get_music_returns_empty_for_unknown_theme():
     assert response.json()["default_tracks"] == []
 
 
-def test_recommend_music_returns_ai_message_and_tracks():
+def test_recommend_music_returns_ai_message_and_tracks(monkeypatch):
+    async def fake_search_deezer_tracks(query, *, limit=5, is_ai_recommended=True):
+        return [
+            MusicTrack(
+                music_id=3002,
+                title="Warm Memory",
+                file_url="https://cdns-preview.test/warm.mp3",
+                is_ai_recommended=is_ai_recommended,
+                artist="Preview Artist",
+                provider="deezer",
+            )
+        ]
+
+    monkeypatch.setattr("app.routers.music._search_deezer_tracks", fake_search_deezer_tracks)
+
     response = create_test_client().post(
         "/api/v1/music/recommend",
-        json={"movie_id": 1, "message": "잔잔하고 따뜻한 분위기가 좋아요"},
+        json={
+            "movie_id": 1,
+            "message": "잔잔하고 따뜻한 분위기가 좋아요",
+            "mood": "차분함",
+            "scene": "가족과 다시 만나는 장면",
+            "story_hint": "어릴 적 기억을 회상하는 이야기",
+            "avoid": "너무 빠른 비트",
+        },
     )
 
     assert response.status_code == 200
@@ -43,19 +88,61 @@ def test_recommend_music_returns_ai_message_and_tracks():
     assert "ai_message" in body
     assert "tracks" in body
     assert len(body["tracks"]) > 0
+    assert "artist" in body["tracks"][0]
+    assert "provider" in body["tracks"][0]
+    assert body["tracks"][0]["file_url"].startswith("https://")
 
 
-def test_recommend_music_returns_mock_when_empty_results(monkeypatch):
-    """Spotify가 빈 결과를 반환하면 mock fallback이 내려와야 한다."""
+def test_recommend_music_mock_returns_contextual_unique_tracks(monkeypatch):
+    async def fake_search_deezer_tracks(query, *, limit=5, is_ai_recommended=True):
+        return []
+
+    monkeypatch.setattr("app.routers.music._search_deezer_tracks", fake_search_deezer_tracks)
+
+    client = create_test_client()
+
+    calm_response = client.post(
+        "/api/v1/music/recommend",
+        json={"movie_id": 1, "message": "차분하고 따뜻한 분위기"},
+    )
+    bright_response = client.post(
+        "/api/v1/music/recommend",
+        json={"movie_id": 1, "message": "밝고 신나는 여름 분위기"},
+    )
+
+    assert calm_response.status_code == 200
+    assert bright_response.status_code == 200
+    calm_tracks = calm_response.json()["tracks"]
+    bright_tracks = bright_response.json()["tracks"]
+    assert len(calm_tracks) >= 3
+    assert len(bright_tracks) >= 3
+    assert calm_tracks[0]["music_id"] != bright_tracks[0]["music_id"]
+    assert calm_tracks[0]["title"] != bright_tracks[0]["title"]
+
+
+def test_recommend_music_returns_deezer_when_spotify_empty(monkeypatch):
     async def fake_get_token(client_id, client_secret):
         return "fake_token"
 
     async def fake_search_empty(token, query):
         return []
 
+    async def fake_search_deezer_tracks(query, *, limit=5, is_ai_recommended=True):
+        return [
+            MusicTrack(
+                music_id=3003,
+                title="Deezer Preview",
+                file_url="https://cdns-preview.test/deezer.mp3",
+                is_ai_recommended=is_ai_recommended,
+                artist="Preview Artist",
+                provider="deezer",
+            )
+        ]
+
     from app.core.config import Settings
     monkeypatch.setattr("app.routers.music._get_spotify_token", fake_get_token)
     monkeypatch.setattr("app.routers.music._search_spotify_tracks", fake_search_empty)
+    monkeypatch.setattr("app.routers.music._search_deezer_tracks", fake_search_deezer_tracks)
     monkeypatch.setattr("app.routers.music.get_settings", lambda: Settings(
         spotify_client_id="x", spotify_client_secret="x"
     ))
@@ -67,7 +154,48 @@ def test_recommend_music_returns_mock_when_empty_results(monkeypatch):
 
     assert response.status_code == 200
     body = response.json()
-    assert len(body["tracks"]) > 0
+    assert body["tracks"][0]["provider"] == "deezer"
+    assert body["tracks"][0]["file_url"].startswith("https://")
+
+
+def test_recommend_music_builds_spotify_query_from_user_context(monkeypatch):
+    captured_queries: list[str] = []
+
+    async def fake_get_token(client_id, client_secret):
+        return "fake_token"
+
+    async def fake_search(token, query):
+        captured_queries.append(query)
+        return []
+
+    async def fake_search_deezer_tracks(query, *, limit=5, is_ai_recommended=True):
+        return []
+
+    from app.core.config import Settings
+    monkeypatch.setattr("app.routers.music._get_spotify_token", fake_get_token)
+    monkeypatch.setattr("app.routers.music._search_spotify_tracks", fake_search)
+    monkeypatch.setattr("app.routers.music._search_deezer_tracks", fake_search_deezer_tracks)
+    monkeypatch.setattr("app.routers.music.get_settings", lambda: Settings(
+        spotify_client_id="x", spotify_client_secret="x"
+    ))
+
+    response = create_test_client().post(
+        "/api/v1/music/recommend",
+        json={
+            "movie_id": 1,
+            "message": "따뜻한 영화 음악",
+            "mood": "차분함",
+            "scene": "졸업식 장면",
+            "story_hint": "친구들과 헤어지는 성장 이야기",
+            "avoid": "전자음",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "차분함" in captured_queries[0]
+    assert "졸업식 장면" in captured_queries[0]
+    assert "친구들과 헤어지는 성장 이야기" in captured_queries[0]
+    assert "not 전자음" in captured_queries[0]
 
 
 def test_update_music_saves_selection(api_client):

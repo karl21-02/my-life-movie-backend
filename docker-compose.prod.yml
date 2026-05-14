@@ -19,6 +19,24 @@ services:
       my-life-movie-redis:
         condition: service_healthy
 
+  my-life-movie-video-worker:
+    build:
+      context: .
+      target: runtime
+    command:
+      - uv
+      - run
+      - --frozen
+      - --no-dev
+      - python
+      - -m
+      - app.workers.video_generation_worker
+    env_file: .env
+    depends_on:
+      my-life-movie-redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   my-life-movie-redis:
     image: redis:7.4-alpine
     ports:
