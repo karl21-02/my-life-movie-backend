@@ -7,7 +7,7 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import request_context_middleware
 from app.core.openapi import API_DESCRIPTION, OPENAPI_TAGS
-from app.routers import themes, music
+from app.routers import themes, music, images
 from app.routers import auth_router
 from prometheus_fastapi_instrumentator import Instrumentator
 
@@ -42,6 +42,7 @@ def create_app() -> FastAPI:
     app.include_router(music.router)
     app.include_router(movies_router)
     app.include_router(auth_router)
+    app.include_router(images.router)
 
     @app.get(
         "/health",
