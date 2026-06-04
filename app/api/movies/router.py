@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.movies import schemas
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.deps import get_current_user
 from app.core.errors import AppError
 from app.core.openapi import (
@@ -33,9 +33,12 @@ from app.schemas.movie import (
     SummaryResponse,
 )
 from app.services.access_token_service import AccessTokenClaims
-from app.services.story_generation_service import generate_story_inputs
+from app.services.story_generation_service import finalize_story, generate_chat_turn
 from app.services.video_generation_provider import resolve_video_generation_provider_name
-from app.services.video_generation_service import VideoGenerationService
+from app.services.video_generation_service import (
+    VideoGenerationService,
+    generation_input_not_ready_error,
+)
 from app.services.storage_service import build_storage_service
 from app.services.movie_recommendation_service import build_movie_recommendation_service
 
@@ -157,8 +160,8 @@ async def upload_file(
     response_model=ChatResponse,
     summary="AI 이야기 대화",
     description=(
-        "사용자 메시지를 기반으로 AI 역질문, 이야기 초안, 영상 생성용 story brief, "
-        "scene plan, generation prompt를 갱신합니다."
+        "사용자 메시지를 기반으로 빠른 AI 역질문과 이야기 초안을 갱신합니다. "
+        "영상 생성용 story brief, scene plan, generation prompt는 finalize-story 단계에서 생성합니다."
     ),
 )
 async def chat_prompt(
@@ -173,26 +176,27 @@ async def chat_prompt(
 
     history = list(movie.chat_history or [])
     history.append({"role": "user", "message": request.message})
+    settings = get_settings()
 
-    result = await generate_story_inputs(
-        api_key=get_settings().openai_api_key,
+    result = await generate_chat_turn(
+        api_key=settings.openai_api_key,
         history=history,
         current_draft=movie.current_draft,
         latest_message=request.message,
+        settings=settings,
+        movie_id=movie.id,
     )
 
     history.append({"role": "ai", "message": result.ai_question})
     movie.chat_history = history
     movie.current_draft = result.current_draft
-    movie.story_brief = result.story_brief
-    movie.scene_plan = result.scene_plan
-    movie.generation_prompt = result.generation_prompt
+    movie.story_brief = None
+    movie.scene_plan = None
+    movie.generation_prompt = None
     repo.update(movie)
     return ChatResponse(
         ai_question=result.ai_question,
         current_draft=result.current_draft,
-        story_brief=result.story_brief,
-        scene_plan=result.scene_plan,
     )
 
 
@@ -226,6 +230,31 @@ async def get_summary(
     """피드백 페이지용 최종 입력 요약 (프롬프트 + 업로드 파일 + 테마 + 음악)을 반환합니다."""
     repo = SQLAlchemyMovieRepository(db)
     movie = _get_movie_or_403(repo, movie_id, current_user.user_id)
+    return build_summary_response(movie)
+
+
+@router.post(
+    "/{movie_id}/finalize-story",
+    response_model=SummaryResponse,
+    summary="영화 생성용 이야기 확정",
+    description=(
+        "저장된 채팅과 초안을 기반으로 영상 생성용 story brief, scene plan, "
+        "generation prompt를 생성해 저장합니다. 이미 확정된 경우 저장된 값을 반환합니다."
+    ),
+)
+async def finalize_movie_story(
+    movie_id: int,
+    db: Session = Depends(get_db_session),
+    current_user: AccessTokenClaims = Depends(get_current_user),
+):
+    """무거운 AI 이야기 구조화 작업을 명시적으로 수행합니다."""
+    repo = SQLAlchemyMovieRepository(db)
+    movie = _get_movie_or_403(repo, movie_id, current_user.user_id)
+    movie = await _finalize_movie_story_if_needed(movie, get_settings(), repo)
+    return build_summary_response(movie)
+
+
+def build_summary_response(movie: Movie) -> SummaryResponse:
     return SummaryResponse(
         prompt=movie.current_draft or "",
         files=movie.files or [],
@@ -234,6 +263,42 @@ async def get_summary(
         story_brief=movie.story_brief,
         scene_plan=movie.scene_plan or [],
         generation_prompt=movie.generation_prompt,
+        is_finalized=bool(movie.generation_prompt),
+    )
+
+
+async def _finalize_movie_story_if_needed(
+    movie: Movie,
+    settings: Settings,
+    repo: SQLAlchemyMovieRepository,
+) -> Movie:
+    if movie.generation_prompt:
+        return movie
+
+    history = list(movie.chat_history or [])
+    if not has_story_input(movie, history):
+        raise generation_input_not_ready_error()
+
+    result = await finalize_story(
+        api_key=settings.openai_api_key,
+        history=history,
+        current_draft=movie.current_draft,
+        settings=settings,
+        movie_id=movie.id,
+    )
+    movie.story_brief = result.story_brief
+    movie.scene_plan = result.scene_plan
+    movie.generation_prompt = result.generation_prompt
+    return repo.update(movie)
+
+
+def has_story_input(movie: Movie, history: list[dict]) -> bool:
+    if movie.current_draft and movie.current_draft.strip():
+        return True
+    return any(
+        entry.get("role") == "user" and str(entry.get("message") or "").strip()
+        for entry in history
+        if isinstance(entry, dict)
     )
 
 

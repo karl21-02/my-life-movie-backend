@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from collections.abc import Callable
 from hashlib import sha256
+import os
 import re
 import tempfile
 import time
@@ -562,9 +563,14 @@ def safe_generated_filename(value: str) -> str:
 
 def read_binary_response(content: object) -> bytes:
     if hasattr(content, "write_to_file"):
-        with tempfile.NamedTemporaryFile() as file:
-            content.write_to_file(file.name)
-            return file.read()
+        with tempfile.NamedTemporaryFile(delete=False) as file:
+            path = file.name
+        try:
+            content.write_to_file(path)
+            with open(path, "rb") as file:
+                return file.read()
+        finally:
+            os.unlink(path)
 
     if isinstance(content, (bytes, bytearray)):
         return bytes(content)

@@ -33,8 +33,6 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     ai_question: str
     current_draft: str
-    story_brief: dict[str, Any]
-    scene_plan: list[dict[str, Any]]
 
 
 class FileUploadResponse(BaseModel):
@@ -52,6 +50,7 @@ class SummaryResponse(BaseModel):
     story_brief: dict[str, Any] | None = None
     scene_plan: list[dict[str, Any]] = Field(default_factory=list)
     generation_prompt: str | None = None
+    is_finalized: bool = False
 
 
 class GenerationRequestResponse(BaseModel):
