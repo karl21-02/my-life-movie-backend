@@ -11,6 +11,8 @@ class SimilarMovie(BaseModel):
     id: int
     title: str
     thumbnail: str
+    external_url: str | None = None
+    provider: str = "fallback"
 
 
 class Movie(BaseModel):
@@ -20,6 +22,9 @@ class Movie(BaseModel):
     thumbnail: str
     genre: str
     sentiment: str
+    status: str
+    output_url: str | None = None
+    thumbnail_url: str | None = None
     ost: list[OstTrack]
     similar_movies: list[SimilarMovie]
 
@@ -29,6 +34,9 @@ class MovieSummary(BaseModel):
     title: str
     thumbnail: str
     genre: str
+    status: str
+    output_url: str | None = None
+    thumbnail_url: str | None = None
 
 
 class DeleteMovieResponse(BaseModel):
@@ -39,6 +47,8 @@ class DownloadMovieResponse(BaseModel):
     message: str
     movie_id: int
     title: str
+    output_url: str | None = None
+    download_url: str | None = None
 
 
 class ShareMovieResponse(BaseModel):

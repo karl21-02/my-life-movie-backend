@@ -9,6 +9,9 @@ My Life Movie 백엔드 API 문서입니다.
 인증 API는 이메일/비밀번호 기반 회원가입과 로그인, bearer access token 검증,
 refresh token 회전, 로그아웃을 제공합니다.
 
+영화 API는 영화 초안 생성, 음악/파일/대화 입력 저장, AI 기반 영상 생성 요청,
+생성 상태 조회, 다운로드, 공유, 유사 영화 추천을 제공합니다.
+
 에러 응답은 Problem Details 스타일로 통일하며, 모든 응답에는 문제 추적을 위한
 `request_id`가 포함됩니다. refresh token은 `HttpOnly` cookie로만 전달하고,
 DB 또는 Redis 저장소에는 원문이 아닌 `sha256` hash만 저장합니다.
@@ -25,6 +28,21 @@ OPENAPI_TAGS = [
             "회원가입, 로그인, 현재 사용자 조회, refresh token 회전, 로그아웃 API입니다. "
             "`/auth/me`는 Authorization bearer token이 필요하고, "
             "`/auth/refresh`, `/auth/logout`은 `refresh_token` HttpOnly cookie를 사용합니다."
+        ),
+    },
+    {
+        "name": "테마",
+        "description": "영화 생성에 사용할 테마 목록을 조회합니다.",
+    },
+    {
+        "name": "음악",
+        "description": "테마별 음악 목록과 AI 음악 추천 결과를 조회합니다.",
+    },
+    {
+        "name": "영화",
+        "description": (
+            "영화 초안 생성부터 입력 저장, AI 대화, 영상 생성 요청, 생성 상태 조회, "
+            "다운로드, 공유, 유사 영화 추천까지 영화 제작 플로우를 제공합니다."
         ),
     },
 ]
@@ -100,6 +118,61 @@ EMAIL_CONFLICT_EXAMPLE = {
     "errors": [],
 }
 
+MOVIE_NOT_FOUND_EXAMPLE = {
+    "type": "movie_not_found",
+    "title": "Movie Not Found",
+    "status": 404,
+    "detail": "영화를 찾을 수 없습니다.",
+    "instance": "/api/movies/1",
+    "code": "MOVIE_NOT_FOUND",
+    "request_id": "req_123",
+    "errors": [],
+}
+
+MOVIE_FORBIDDEN_EXAMPLE = {
+    "type": "movie_forbidden",
+    "title": "Movie Forbidden",
+    "status": 403,
+    "detail": "해당 영화에 접근할 권한이 없습니다.",
+    "instance": "/api/movies/1",
+    "code": "MOVIE_FORBIDDEN",
+    "request_id": "req_123",
+    "errors": [],
+}
+
+GENERATION_INPUT_NOT_READY_EXAMPLE = {
+    "type": "generation_input_not_ready",
+    "title": "Generation Input Not Ready",
+    "status": 409,
+    "detail": "영상 생성 입력이 아직 준비되지 않았습니다.",
+    "instance": "/api/movies/1/generate",
+    "code": "GENERATION_INPUT_NOT_READY",
+    "request_id": "req_123",
+    "errors": [],
+}
+
+GENERATION_ALREADY_IN_PROGRESS_EXAMPLE = {
+    "type": "generation_already_in_progress",
+    "title": "Generation Already In Progress",
+    "status": 409,
+    "detail": "이미 진행 중인 영상 생성 작업이 있습니다.",
+    "instance": "/api/movies/1/generate",
+    "code": "GENERATION_ALREADY_IN_PROGRESS",
+    "request_id": "req_123",
+    "errors": [],
+}
+
+GENERATION_JOB_NOT_FOUND_EXAMPLE = {
+    "type": "generation_job_not_found",
+    "title": "Generation Job Not Found",
+    "status": 404,
+    "detail": "영상 생성 작업을 찾을 수 없습니다.",
+    "instance": "/api/movies/1/generation",
+    "code": "GENERATION_JOB_NOT_FOUND",
+    "request_id": "req_123",
+    "errors": [],
+}
+
 INTERNAL_SERVER_ERROR_EXAMPLE = {
     "type": "internal_server_error",
     "title": "Internal Server Error",
@@ -167,3 +240,45 @@ ACCOUNT_NOT_ACTIVE_RESPONSE = problem_response(
         "errors": [],
     },
 )
+
+MOVIE_NOT_FOUND_RESPONSE = problem_response(
+    description="영화를 찾을 수 없거나 삭제된 상태입니다.",
+    example=MOVIE_NOT_FOUND_EXAMPLE,
+)
+
+MOVIE_FORBIDDEN_RESPONSE = problem_response(
+    description="현재 사용자가 해당 영화에 접근할 수 없습니다.",
+    example=MOVIE_FORBIDDEN_EXAMPLE,
+)
+
+GENERATION_CONFLICT_RESPONSE = problem_response(
+    description="영상 생성 입력이 준비되지 않았거나 이미 진행 중인 생성 작업이 있습니다.",
+    example=GENERATION_INPUT_NOT_READY_EXAMPLE,
+)
+
+GENERATION_JOB_NOT_FOUND_RESPONSE = problem_response(
+    description="해당 영화의 영상 생성 Job을 찾을 수 없습니다.",
+    example=GENERATION_JOB_NOT_FOUND_EXAMPLE,
+)
+
+MOVIE_PROBLEM_RESPONSES = {
+    401: AUTH_REQUIRED_RESPONSE,
+    403: MOVIE_FORBIDDEN_RESPONSE,
+    404: MOVIE_NOT_FOUND_RESPONSE,
+    **COMMON_PROBLEM_RESPONSES,
+}
+
+GENERATION_REQUEST_PROBLEM_RESPONSES = {
+    401: AUTH_REQUIRED_RESPONSE,
+    403: MOVIE_FORBIDDEN_RESPONSE,
+    404: MOVIE_NOT_FOUND_RESPONSE,
+    409: GENERATION_CONFLICT_RESPONSE,
+    **COMMON_PROBLEM_RESPONSES,
+}
+
+GENERATION_STATUS_PROBLEM_RESPONSES = {
+    401: AUTH_REQUIRED_RESPONSE,
+    403: MOVIE_FORBIDDEN_RESPONSE,
+    404: GENERATION_JOB_NOT_FOUND_RESPONSE,
+    **COMMON_PROBLEM_RESPONSES,
+}

@@ -1,5 +1,7 @@
 import io
 
+from app.models.movie import Movie
+
 
 def _create_draft(api_client, theme_id: int = 1) -> int:
     return api_client.post("/api/movies/draft", json={"theme_id": theme_id}).json()["movie_id"]
@@ -52,10 +54,29 @@ def test_chat_returns_ai_question_and_draft(api_client):
     body = response.json()
     assert "ai_question" in body
     assert "current_draft" in body
-    assert "story_brief" in body
-    assert "scene_plan" in body
+    assert "story_brief" not in body
+    assert "scene_plan" not in body
     assert len(body["ai_question"]) > 0
-    assert len(body["scene_plan"]) > 0
+
+
+def test_chat_invalidates_finalized_story_cache(api_client, db_session):
+    movie_id = _create_draft(api_client)
+    movie = db_session.get(Movie, movie_id)
+    movie.story_brief = {"title": "이전 제목"}
+    movie.scene_plan = [{"order": 1}]
+    movie.generation_prompt = "이전 프롬프트"
+    db_session.commit()
+
+    response = api_client.post(
+        f"/api/movies/{movie_id}/chat",
+        json={"message": "새로운 이야기를 추가하고 싶어요"},
+    )
+
+    assert response.status_code == 200
+    db_session.refresh(movie)
+    assert movie.story_brief is None
+    assert movie.scene_plan is None
+    assert movie.generation_prompt is None
 
 
 def test_chat_to_unknown_movie_returns_404(api_client):
@@ -80,23 +101,23 @@ def test_get_chat_history_returns_conversation(api_client):
     assert len(history) == 4  # user + ai 각 2회
 
 
-def test_chat_returns_timeout_message_when_gpt_times_out(api_client, monkeypatch):
+def test_chat_uses_natural_fallback_when_gpt_times_out(api_client, monkeypatch):
     import httpx
     from openai import APITimeoutError
     from app.core.config import Settings
 
-    async def fake_gpt_timeout(api_key, history):
+    async def fake_gpt_timeout(api_key, history, settings, current_draft, latest_message):
         raise APITimeoutError(request=httpx.Request("POST", "https://api.openai.com"))
 
-    monkeypatch.setattr("app.services.story_generation_service._call_gpt", fake_gpt_timeout)
+    monkeypatch.setattr("app.services.story_generation_service._call_chat_gpt", fake_gpt_timeout)
     monkeypatch.setattr("app.api.movies.router.get_settings", lambda: Settings(openai_api_key="fake-key"))
 
     movie_id = _create_draft(api_client)
     response = api_client.post(f"/api/movies/{movie_id}/chat", json={"message": "테스트"})
 
     assert response.status_code == 200
-    assert "초과" in response.json()["ai_question"]
-    assert len(response.json()["scene_plan"]) > 0
+    assert "초과" not in response.json()["ai_question"]
+    assert "scene_plan" not in response.json()
 
 
 def test_get_chat_history_for_unknown_movie_returns_404(api_client):

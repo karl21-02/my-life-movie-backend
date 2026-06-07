@@ -6,6 +6,10 @@ class MusicTrack(BaseModel):
     title: str
     file_url: str
     is_ai_recommended: bool = False
+    artist: str | None = None
+    provider: str = "local"
+    provider_track_id: str | None = None
+    external_url: str | None = None
 
 
 class MusicListResponse(BaseModel):
@@ -16,6 +20,10 @@ class MusicListResponse(BaseModel):
 class MusicRecommendRequest(BaseModel):
     movie_id: int
     message: str
+    mood: str | None = None
+    scene: str | None = None
+    story_hint: str | None = None
+    avoid: str | None = None
 
 
 class MusicRecommendResponse(BaseModel):
