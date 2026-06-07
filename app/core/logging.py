@@ -34,6 +34,8 @@ STRUCTURED_FIELDS = (
     "duration_ms",
     "error_code",
     "error_type",
+    "movie_id",
+    "turn_count",
 )
 
 
