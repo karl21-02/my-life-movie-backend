@@ -35,6 +35,7 @@ from app.schemas.movie import (
 from app.services.access_token_service import AccessTokenClaims
 from app.services.story_generation_service import finalize_story, generate_chat_turn
 from app.services.video_generation_provider import resolve_video_generation_provider_name
+from app.services.video_generation_queue import VideoGenerationQueue, build_video_generation_queue
 from app.services.video_generation_service import (
     VideoGenerationService,
     generation_input_not_ready_error,
@@ -302,12 +303,21 @@ def has_story_input(movie: Movie, history: list[dict]) -> bool:
     )
 
 
-def _get_video_generation_service(db: Session) -> VideoGenerationService:
+def get_video_generation_queue() -> VideoGenerationQueue:
+    """영상 생성 큐 의존성. 테스트에서 override 가능하도록 분리."""
+    return build_video_generation_queue(get_settings())
+
+
+def _get_video_generation_service(
+    db: Session,
+    queue: VideoGenerationQueue | None = None,
+) -> VideoGenerationService:
     settings = get_settings()
     return VideoGenerationService(
         movie_repository=SQLAlchemyMovieRepository(db),
         job_repository=SQLAlchemyVideoGenerationJobRepository(db),
         provider_name=resolve_video_generation_provider_name(settings),
+        queue=queue,
     )
 
 
@@ -358,9 +368,10 @@ async def generate_movie(
     movie_id: int,
     db: Session = Depends(get_db_session),
     current_user: AccessTokenClaims = Depends(get_current_user),
+    queue: VideoGenerationQueue = Depends(get_video_generation_queue),
 ):
     """영상 생성 Job을 생성하고 QUEUED 상태로 반환합니다."""
-    result = _get_video_generation_service(db).request_generation(
+    result = _get_video_generation_service(db, queue=queue).request_generation(
         movie_id=movie_id,
         user_id=current_user.user_id,
     )
