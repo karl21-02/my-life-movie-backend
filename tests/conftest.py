@@ -6,11 +6,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api.movies.router import get_video_generation_queue
 from app.core.deps import get_current_user
 from app.db.base import Base
 from app.db.session import get_db_session
 from app.main import create_app
 from app.services.access_token_service import AccessTokenClaims
+from tests.fakes import InMemoryVideoGenerationQueue
 
 
 @pytest.fixture()
@@ -44,6 +46,7 @@ def api_client(db_session: Session, mock_user: AccessTokenClaims) -> Generator[T
 
     app.dependency_overrides[get_db_session] = override_db_session
     app.dependency_overrides[get_current_user] = lambda: mock_user
+    app.dependency_overrides[get_video_generation_queue] = lambda: InMemoryVideoGenerationQueue()
 
     with TestClient(app, raise_server_exceptions=False) as client:
         yield client

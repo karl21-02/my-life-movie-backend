@@ -1,6 +1,7 @@
+from datetime import datetime, timezone
 from typing import Protocol
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.orm import Session
 
@@ -36,6 +37,9 @@ class VideoGenerationJobRepository(Protocol):
         ...
 
     def get_next_queued(self) -> VideoGenerationJob | None:
+        ...
+
+    def claim(self, job_id: int) -> VideoGenerationJob | None:
         ...
 
     def update(self, job: VideoGenerationJob) -> VideoGenerationJob:
@@ -114,6 +118,30 @@ class SQLAlchemyVideoGenerationJobRepository:
             .order_by(VideoGenerationJob.created_at.asc(), VideoGenerationJob.id.asc())
             .limit(1)
         )
+
+    def claim(self, job_id: int) -> VideoGenerationJob | None:
+        """QUEUED job을 원자적으로 RUNNING으로 전환한다.
+
+        조건부 UPDATE(... WHERE status=QUEUED)라 동시에 여러 워커가 같은 job을
+        잡아도 DB row 락으로 직렬화되어 정확히 한 워커만 rowcount==1을 받는다.
+        나머지는 0을 받고 None을 돌려받아 처리를 양보한다.
+        """
+        result = self.session.execute(
+            update(VideoGenerationJob)
+            .where(
+                VideoGenerationJob.id == job_id,
+                VideoGenerationJob.status == VideoGenerationJobStatus.QUEUED,
+            )
+            .values(
+                status=VideoGenerationJobStatus.RUNNING,
+                started_at=datetime.now(timezone.utc),
+                progress=1,
+            )
+        )
+        self.session.commit()
+        if result.rowcount != 1:
+            return None
+        return self.get_by_id(job_id)
 
     def update(self, job: VideoGenerationJob) -> VideoGenerationJob:
         try:

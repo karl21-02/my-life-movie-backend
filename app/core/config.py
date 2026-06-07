@@ -43,6 +43,12 @@ class Settings:
     fal_poll_interval_seconds: float = 5
     fal_max_wait_seconds: int = 900
     video_generation_worker_poll_interval_seconds: int = 5
+    video_generation_stream_key: str = "video_generation:stream"
+    video_generation_consumer_group: str = "workers"
+    video_generation_block_ms: int = 5000
+    # provider 최대 실행시간(기본 900s)보다 길게 — 살아있는 긴 job을 회수하지 않도록
+    video_generation_reclaim_min_idle_ms: int = 1_200_000
+    video_generation_reclaim_count: int = 10
     storage_provider: str = "local"
     local_storage_dir: str = "generated"
     local_public_base_url: str = "/generated"
@@ -175,6 +181,26 @@ def get_settings() -> Settings:
         video_generation_worker_poll_interval_seconds=parse_int_env(
             os.getenv("VIDEO_GENERATION_WORKER_POLL_INTERVAL_SECONDS"),
             5,
+        ),
+        video_generation_stream_key=os.getenv(
+            "VIDEO_GENERATION_STREAM_KEY",
+            "video_generation:stream",
+        ),
+        video_generation_consumer_group=os.getenv(
+            "VIDEO_GENERATION_CONSUMER_GROUP",
+            "workers",
+        ),
+        video_generation_block_ms=parse_int_env(
+            os.getenv("VIDEO_GENERATION_BLOCK_MS"),
+            5_000,
+        ),
+        video_generation_reclaim_min_idle_ms=parse_int_env(
+            os.getenv("VIDEO_GENERATION_RECLAIM_MIN_IDLE_MS"),
+            1_200_000,
+        ),
+        video_generation_reclaim_count=parse_int_env(
+            os.getenv("VIDEO_GENERATION_RECLAIM_COUNT"),
+            10,
         ),
         storage_provider=os.getenv("STORAGE_PROVIDER", "local").strip().lower(),
         local_storage_dir=os.getenv("LOCAL_STORAGE_DIR", os.getenv("GENERATED_MEDIA_DIR", "generated")),

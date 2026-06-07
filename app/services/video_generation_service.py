@@ -9,6 +9,7 @@ from app.models.video_generation_job import VideoGenerationJob, VideoGenerationJ
 from app.repositories.movie_repository import MovieRepository
 from app.repositories.video_generation_job_repository import VideoGenerationJobRepository
 from app.services.video_generation_input_builder import build_video_generation_input
+from app.services.video_generation_queue import VideoGenerationQueue
 
 
 @dataclass(frozen=True)
@@ -23,12 +24,17 @@ class VideoGenerationService:
         movie_repository: MovieRepository,
         job_repository: VideoGenerationJobRepository,
         provider_name: str = "mock",
+        queue: VideoGenerationQueue | None = None,
     ) -> None:
         self.movie_repository = movie_repository
         self.job_repository = job_repository
         self.provider_name = provider_name
+        self.queue = queue
 
     def request_generation(self, *, movie_id: int, user_id: int) -> VideoGenerationRequestResult:
+        if self.queue is None:
+            raise RuntimeError("영상 생성 요청에는 queue가 필요합니다.")
+
         movie = self.movie_repository.get_by_id(movie_id)
         if movie is None:
             raise generation_movie_not_found_error()
@@ -48,9 +54,17 @@ class VideoGenerationService:
             input_snapshot=input_snapshot,
             provider=self.provider_name,
         )
+        self.queue.enqueue(job.id)
         movie.status = MovieStatus.GENERATING
         self.movie_repository.update(movie)
         return VideoGenerationRequestResult(job=job)
+
+    def claim_generation(self, *, job_id: int) -> VideoGenerationJob | None:
+        """QUEUED job을 원자적으로 RUNNING으로 전환한다. 이미 뺏겼으면 None."""
+        return self.job_repository.claim(job_id)
+
+    def get_job(self, *, job_id: int) -> VideoGenerationJob | None:
+        return self.job_repository.get_by_id(job_id)
 
     def get_latest_generation(self, *, movie_id: int, user_id: int) -> VideoGenerationJob:
         movie = self.movie_repository.get_by_id(movie_id)

@@ -97,3 +97,32 @@ def test_get_next_queued_returns_oldest_queued_job(db_session: Session):
     assert next_job is not None
     assert next_job.id == first.id
     assert next_job.id != second.id
+
+
+def test_claim_transitions_queued_to_running(db_session: Session):
+    user, movie = _create_movie(db_session)
+    repository = SQLAlchemyVideoGenerationJobRepository(db_session)
+    job = repository.create(movie_id=movie.id, user_id=user.id, input_snapshot={"order": 1})
+
+    claimed = repository.claim(job.id)
+
+    assert claimed is not None
+    assert claimed.status == VideoGenerationJobStatus.RUNNING
+    assert claimed.progress == 1
+    assert claimed.started_at is not None
+
+
+def test_claim_returns_none_when_not_queued(db_session: Session):
+    # 두 번째 claim은 이미 RUNNING이라 조건부 UPDATE가 0행 → None (이중 claim 방지)
+    user, movie = _create_movie(db_session)
+    repository = SQLAlchemyVideoGenerationJobRepository(db_session)
+    job = repository.create(movie_id=movie.id, user_id=user.id, input_snapshot={"order": 1})
+
+    assert repository.claim(job.id) is not None
+    assert repository.claim(job.id) is None
+
+
+def test_claim_returns_none_for_unknown_job(db_session: Session):
+    repository = SQLAlchemyVideoGenerationJobRepository(db_session)
+
+    assert repository.claim(999_999) is None
