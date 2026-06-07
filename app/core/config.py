@@ -25,6 +25,11 @@ class Settings:
     spotify_client_id: str = ""
     spotify_client_secret: str = ""
     openai_api_key: str = ""
+    openai_chat_model: str = "gpt-4o-mini"
+    openai_chat_timeout_seconds: float = 10.0
+    openai_chat_max_tokens: int = 250
+    openai_story_finalize_timeout_seconds: float = 45.0
+    openai_story_finalize_max_tokens: int = 900
     video_generation_provider: str = "auto"
     generated_media_dir: str = "generated"
     openai_video_model: str = "sora-2"
@@ -126,6 +131,23 @@ def get_settings() -> Settings:
         spotify_client_id=os.getenv("SPOTIFY_CLIENT_ID", ""),
         spotify_client_secret=os.getenv("SPOTIFY_CLIENT_SECRET", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+        openai_chat_model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
+        openai_chat_timeout_seconds=parse_float_env(
+            os.getenv("OPENAI_CHAT_TIMEOUT_SECONDS"),
+            10.0,
+        ),
+        openai_chat_max_tokens=parse_int_env(
+            os.getenv("OPENAI_CHAT_MAX_TOKENS"),
+            250,
+        ),
+        openai_story_finalize_timeout_seconds=parse_float_env(
+            os.getenv("OPENAI_STORY_FINALIZE_TIMEOUT_SECONDS"),
+            45.0,
+        ),
+        openai_story_finalize_max_tokens=parse_int_env(
+            os.getenv("OPENAI_STORY_FINALIZE_MAX_TOKENS"),
+            900,
+        ),
         video_generation_provider=os.getenv("VIDEO_GENERATION_PROVIDER", "auto").strip().lower(),
         generated_media_dir=os.getenv("GENERATED_MEDIA_DIR", "generated"),
         openai_video_model=os.getenv("OPENAI_VIDEO_MODEL", "sora-2"),
