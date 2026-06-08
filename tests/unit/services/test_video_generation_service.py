@@ -8,6 +8,7 @@ from app.repositories.movie_repository import SQLAlchemyMovieRepository
 from app.repositories.video_generation_job_repository import SQLAlchemyVideoGenerationJobRepository
 from app.services.video_generation_service import VideoGenerationService
 from tests.factories import create_user
+from tests.fakes import InMemoryVideoGenerationQueue
 
 
 pytestmark = pytest.mark.unit
@@ -17,6 +18,7 @@ def create_service(db_session: Session) -> VideoGenerationService:
     return VideoGenerationService(
         movie_repository=SQLAlchemyMovieRepository(db_session),
         job_repository=SQLAlchemyVideoGenerationJobRepository(db_session),
+        queue=InMemoryVideoGenerationQueue(),
     )
 
 
@@ -25,6 +27,7 @@ def create_openai_service(db_session: Session) -> VideoGenerationService:
         movie_repository=SQLAlchemyMovieRepository(db_session),
         job_repository=SQLAlchemyVideoGenerationJobRepository(db_session),
         provider_name="openai",
+        queue=InMemoryVideoGenerationQueue(),
     )
 
 
@@ -52,6 +55,36 @@ def test_request_generation_creates_queued_job_and_marks_movie_generating(db_ses
     assert result.job.provider == "mock"
     assert result.job.input_snapshot["provider_prompt"] == "warm cinematic life story"
     assert movie.status == MovieStatus.GENERATING
+
+
+def test_request_generation_enqueues_job(db_session: Session):
+    user, movie = create_ready_movie(db_session)
+    queue = InMemoryVideoGenerationQueue()
+    service = VideoGenerationService(
+        movie_repository=SQLAlchemyMovieRepository(db_session),
+        job_repository=SQLAlchemyVideoGenerationJobRepository(db_session),
+        queue=queue,
+    )
+
+    result = service.request_generation(movie_id=movie.id, user_id=user.id)
+
+    assert queue.enqueued == [result.job.id]
+
+
+def test_claim_generation_transitions_queued_to_running_once(db_session: Session):
+    user, movie = create_ready_movie(db_session)
+    service = create_service(db_session)
+    created = service.request_generation(movie_id=movie.id, user_id=user.id)
+
+    claimed = service.claim_generation(job_id=created.job.id)
+    second = service.claim_generation(job_id=created.job.id)
+
+    assert claimed is not None
+    assert claimed.status == VideoGenerationJobStatus.RUNNING
+    assert claimed.progress == 1
+    assert claimed.started_at is not None
+    # 이미 RUNNING이라 두 번째 claim은 진다(None)
+    assert second is None
 
 
 def test_request_generation_records_configured_provider(db_session: Session):
